@@ -35,8 +35,18 @@ func (e *Engine) Nuke(ctx context.Context) error {
 		}
 	}
 
-	// キーペアは存在しなくてもエラーにしない（冪等性のため無視）
-	_, _ = e.EC2.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{KeyName: aws.String(KeyName)})
+	// キー名だけでなくisuenv管理タグでも絞り込んでから削除する。
+	// 名前だけで消すと、たまたま同名(isuenv)で作られた無関係のキーペアまで消してしまう。
+	keyPairs, err := e.EC2.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{
+		Filters: []ec2types.Filter{managedFilter(), {Name: aws.String("key-name"), Values: []string{KeyName}}},
+	})
+	if err != nil {
+		return fmt.Errorf("describe key pairs: %w", err)
+	}
+	if len(keyPairs.KeyPairs) > 0 {
+		// 存在しなくてもエラーにしない（冪等性のため無視）
+		_, _ = e.EC2.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{KeyName: aws.String(KeyName)})
+	}
 
 	vpcs, err := e.EC2.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{Filters: []ec2types.Filter{managedFilter()}})
 	if err != nil {

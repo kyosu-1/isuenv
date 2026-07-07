@@ -38,7 +38,11 @@ var listCmd = &cobra.Command{
 			}
 			ttlLeft := "-"
 			if !env.ExpiresAt.IsZero() {
-				ttlLeft = time.Until(env.ExpiresAt).Round(time.Minute).String()
+				if remaining := time.Until(env.ExpiresAt); remaining < 0 {
+					ttlLeft = "expired"
+				} else {
+					ttlLeft = remaining.Round(time.Minute).String()
+				}
 			}
 			var ips []string
 			for _, n := range env.Nodes {

@@ -52,7 +52,7 @@ isuenv problems
 - リージョン: `ap-northeast-1` 固定（matsuu AMIの公開先）
 - インスタンスタイプ: デフォルト `c5.large`（本番レギュレーション相当）、`--instance-type` で変更可
 - ネットワーク: 初回 `up` 時に isuenv 専用の VPC / パブリックサブネット×1 / インターネットゲートウェイ / ルートテーブル / セキュリティグループを作成し、以後使い回す
-- セキュリティグループ: 実行時の自分のグローバルIP（例: `x.x.x.x/32`）のみ 22/80/443 を許可。`up` / `ssh` 実行時にIPが変わっていたらルールを自動更新
+- セキュリティグループ: 実行時の自分のグローバルIP（例: `x.x.x.x/32`）のみ 22/80/443 を許可。`up` / `ssh` 実行時にIPが変わっていたらルールを自動更新。加えて、SG自身からの全プロトコルを許可する自己参照ルールを常に維持し、`--nodes N` 構成のノード間（プライベートIP経由）通信を可能にする
 - 複数台構成: `--nodes N` で同一AMIをN台、同一サブネットに起動。ノード名は `<problem>-1`, `<problem>-2`, ...
 
 ## 過去問カタログ
@@ -64,7 +64,7 @@ isuenv problems
 
 ## 消し忘れ防止
 
-- `up` 時にuser-dataで `shutdown -P +<TTL分>` を仕込み、`instance-initiated-shutdown-behavior=terminate` を設定する。CLIやローカルマシンが死んでいても、EC2がTTL経過後に自力でterminateされる
+- `up` 時にuser-dataで絶対期限（`Now + TTL` のUnixエポック秒）を `/var/lib/isuenv-expires-at` に書き込み、`/etc/cron.d/isuenv-ttl` で毎分「現在時刻がその期限を過ぎたか」をチェックして超えていれば `shutdown -P now` する仕組みを仕込み、`instance-initiated-shutdown-behavior=terminate` を設定する。CLIやローカルマシンが死んでいても、EC2がTTL経過後に自力でterminateされる。相対時間指定の `shutdown -P +N` はreboot時にキャンセルされ、かつuser-dataは初回起動時にしか実行されないためreboot後は永久に動き続けてしまう。このcronベースの絶対期限方式はreboot後も再評価されるためreboot-safe
 - 「停止」ではなく「削除」に倒す。AMIからいつでも作り直せるため、EBS課金を残す停止に意味はない
 - `list` で経過時間・概算コスト・残りTTLを常に可視化
 - `nuke` で全掃除

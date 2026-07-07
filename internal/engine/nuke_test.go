@@ -31,6 +31,9 @@ func TestNuke_DeletesEverything(t *testing.T) {
 			deleted["instances"] = true
 			return &ec2.TerminateInstancesOutput{}, nil
 		},
+		DescribeKeyPairsFunc: func(ctx context.Context, in *ec2.DescribeKeyPairsInput) (*ec2.DescribeKeyPairsOutput, error) {
+			return &ec2.DescribeKeyPairsOutput{KeyPairs: []ec2types.KeyPairInfo{{KeyName: aws.String("isuenv")}}}, nil
+		},
 		DeleteKeyPairFunc: func(ctx context.Context, in *ec2.DeleteKeyPairInput) (*ec2.DeleteKeyPairOutput, error) {
 			deleted["keypair"] = true
 			return &ec2.DeleteKeyPairOutput{}, nil

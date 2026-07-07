@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/kyosu-1/isuenv/internal/catalog"
@@ -61,12 +62,14 @@ var upCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := refreshSSHConfig(ctx, e); err != nil {
-			return err
-		}
+		// ssh-config更新に失敗してもノードのIPは既に確保できているので、
+		// まず結果を表示してからssh-config更新を試みる（失敗時は警告のみでnilを返す）。
 		fmt.Printf("\n%s is ready. Auto-terminates in %s.\n\n", p.Name, upTTL)
 		for _, n := range nodes {
 			fmt.Printf("  %s-%d  public %s  private %s  (ssh %s-%d)\n", p.Name, n.Index, n.PublicIP, n.PrivateIP, p.Name, n.Index)
+		}
+		if err := refreshSSHConfig(ctx, e); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: ssh config update failed: %v\n", err)
 		}
 		if p.Notes != "" {
 			fmt.Printf("\nNote: %s\n", p.Notes)

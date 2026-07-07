@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"regexp"
@@ -47,7 +48,16 @@ var sshCmd = &cobra.Command{
 		ssh.Stdin = os.Stdin
 		ssh.Stdout = os.Stdout
 		ssh.Stderr = os.Stderr
-		return ssh.Run()
+		if err := ssh.Run(); err != nil {
+			// リモートコマンドの非ゼロ終了はisuenv自体のエラーではないので、
+			// 「Error: exit status N」を出さずにそのままの終了コードで抜ける。
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				os.Exit(exitErr.ExitCode())
+			}
+			return err
+		}
+		return nil
 	},
 }
 

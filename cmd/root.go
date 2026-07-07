@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -19,8 +21,12 @@ var rootCmd = &cobra.Command{
 	SilenceUsage: true,
 }
 
+// Execute はCtrl-C(SIGINT)やSIGTERMでキャンセルされるctxを配ってコマンドを実行する。
+// これにより、up中のポーリングループなどを即座に打ち切って rollback を発火させられる。
 func Execute() error {
-	return rootCmd.Execute()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return rootCmd.ExecuteContext(ctx)
 }
 
 func newEC2Client(ctx context.Context) (*ec2.Client, error) {

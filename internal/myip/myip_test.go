@@ -26,6 +26,20 @@ func TestGet(t *testing.T) {
 	}
 }
 
+func TestGet_RejectsIPv6(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "2001:db8::1")
+	}))
+	defer srv.Close()
+	orig := Endpoint
+	Endpoint = srv.URL
+	defer func() { Endpoint = orig }()
+
+	if _, err := Get(context.Background()); err == nil {
+		t.Fatal("expected error for IPv6 response (result feeds a /32 CIDR)")
+	}
+}
+
 func TestGet_InvalidResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "<html>not an ip</html>")

@@ -12,9 +12,21 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 	"github.com/kyosu-1/isuenv/internal/awsapi"
 	"github.com/kyosu-1/isuenv/internal/catalog"
 )
+
+// notFoundError はRunInstances直後にDescribeInstancesが返しうる
+// InvalidInstanceID.NotFound（結果整合性による一時的な404）を模したsmithy.APIError実装。
+type notFoundError struct{}
+
+func (notFoundError) Error() string                 { return "InvalidInstanceID.NotFound: not found" }
+func (notFoundError) ErrorCode() string             { return "InvalidInstanceID.NotFound" }
+func (notFoundError) ErrorMessage() string          { return "not found" }
+func (notFoundError) ErrorFault() smithy.ErrorFault { return smithy.FaultClient }
+
+var _ smithy.APIError = notFoundError{}
 
 func testProblem() catalog.Problem {
 	return catalog.Problem{Name: "isucon13", AMIPattern: "isucon13-*", OwnerID: "839726181030", SSHUser: "ubuntu"}
@@ -79,8 +91,9 @@ func TestUp_LaunchesNodesWithTagsAndTTL(t *testing.T) {
 		t.Error("shutdown behavior must be terminate (TTL self-destruction)")
 	}
 	ud, err := base64.StdEncoding.DecodeString(aws.ToString(first.UserData))
-	if err != nil || !strings.Contains(string(ud), "shutdown -P +480") {
-		t.Errorf("user data must contain TTL shutdown: %s (err %v)", ud, err)
+	// 2026-07-08T18:00:00Z (Now=10:00 + TTL=8h) のunixエポック秒。
+	if err != nil || !strings.Contains(string(ud), "1783533600") {
+		t.Errorf("user data must contain TTL expiry epoch: %s (err %v)", ud, err)
 	}
 	tags := first.TagSpecifications[0].Tags
 	if tagValue(tags, TagEnv) != "isucon13" || tagValue(tags, TagNode) != "1" {
@@ -246,5 +259,50 @@ func TestDown_NoInstancesIsNoop(t *testing.T) {
 	}
 	if len(ids) != 0 {
 		t.Errorf("expected no ids, got %v", ids)
+	}
+}
+
+func TestUp_RejectsNodesBelowOne(t *testing.T) {
+	e := &Engine{EC2: &awsapi.Mock{}}
+	_, err := e.Up(context.Background(), UpOptions{Problem: testProblem(), AMIID: "ami-123", Nodes: 0, InstanceType: "c5.large", TTL: time.Hour, KeyName: "isuenv", Now: time.Now()})
+	if err == nil || !strings.Contains(err.Error(), "nodes must be >= 1") {
+		t.Fatalf("expected nodes validation error, got %v", err)
+	}
+}
+
+func TestUp_TreatsEventualConsistencyNotFoundAsNotReady(t *testing.T) {
+	PollInterval = time.Millisecond
+	describeCalls := 0
+	m := &awsapi.Mock{
+		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String("i-1")}}}, nil
+		},
+		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+			if len(in.InstanceIds) == 0 {
+				return &ec2.DescribeInstancesOutput{}, nil
+			}
+			describeCalls++
+			if describeCalls == 1 {
+				// RunInstances直後の結果整合性によるNotFound。失敗ではなくリトライすべき。
+				return nil, notFoundError{}
+			}
+			return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{
+				runningInstance("i-1", "isucon13", "1", "54.0.0.1", "10.100.0.11"),
+			}}}}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	nodes, err := e.Up(context.Background(), UpOptions{
+		Problem: testProblem(), AMIID: "ami-123", Nodes: 1, InstanceType: "c5.large",
+		TTL: time.Hour, KeyName: "isuenv", Now: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("transient InvalidInstanceID.NotFound must not fail Up: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %+v", nodes)
+	}
+	if describeCalls < 2 {
+		t.Fatalf("expected a retry after NotFound, got %d describe calls", describeCalls)
 	}
 }

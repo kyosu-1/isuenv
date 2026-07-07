@@ -1,24 +1,26 @@
 package engine
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestBuildUserData(t *testing.T) {
-	ud := BuildUserData(8 * time.Hour)
+	expiresAt := time.Date(2026, 7, 8, 18, 0, 0, 0, time.UTC)
+	ud := BuildUserData(expiresAt)
 	if !strings.HasPrefix(ud, "#!/bin/sh\n") {
 		t.Errorf("user data must be a shell script: %q", ud)
 	}
-	if !strings.Contains(ud, "shutdown -P +480") {
-		t.Errorf("expected shutdown after 480 minutes: %q", ud)
+	wantEpoch := strconv.FormatInt(expiresAt.Unix(), 10)
+	if !strings.Contains(ud, wantEpoch) {
+		t.Errorf("expected expiresAt epoch %s in user data: %q", wantEpoch, ud)
 	}
-}
-
-func TestBuildUserData_MinimumOneMinute(t *testing.T) {
-	ud := BuildUserData(10 * time.Second)
-	if !strings.Contains(ud, "shutdown -P +1") {
-		t.Errorf("TTL below 1 minute must clamp to 1: %q", ud)
+	if !strings.Contains(ud, "/etc/cron.d/isuenv-ttl") {
+		t.Errorf("expected cron.d install path: %q", ud)
+	}
+	if !strings.Contains(ud, "shutdown -P now") {
+		t.Errorf("expected absolute-deadline shutdown (reboot-safe): %q", ud)
 	}
 }

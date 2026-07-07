@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 	"github.com/kyosu-1/isuenv/internal/catalog"
 )
 
@@ -40,6 +42,9 @@ type UpOptions struct {
 // Up は環境を起動し、全ノードがrunningかつパブリックIP付与済みになるまで待つ。
 // 途中で失敗した場合は起動済みインスタンスをterminateしてから失敗を返す。
 func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
+	if opts.Nodes < 1 {
+		return nil, fmt.Errorf("nodes must be >= 1, got %d", opts.Nodes)
+	}
 	name := opts.Problem.Name
 	existing, err := e.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
@@ -57,8 +62,9 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 		}
 	}
 
-	expires := opts.Now.Add(opts.TTL).UTC().Format(time.RFC3339)
-	userData := base64.StdEncoding.EncodeToString([]byte(BuildUserData(opts.TTL)))
+	expiresAt := opts.Now.Add(opts.TTL)
+	expires := expiresAt.UTC().Format(time.RFC3339)
+	userData := base64.StdEncoding.EncodeToString([]byte(BuildUserData(expiresAt)))
 
 	var ids []string
 	for i := 1; i <= opts.Nodes; i++ {
@@ -107,6 +113,15 @@ func (e *Engine) waitRunning(ctx context.Context, ids []string) ([]Node, error) 
 	for attempt := 0; attempt < maxPolls; attempt++ {
 		out, err := e.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: ids})
 		if err != nil {
+			// RunInstances直後はDescribeInstancesが結果整合性によりInvalidInstanceID.NotFoundを
+			// 返すことがある。これは失敗ではなくまだ反映されていないだけなので、リトライ対象として扱う。
+			var apiErr smithy.APIError
+			if errors.As(err, &apiErr) && apiErr.ErrorCode() == "InvalidInstanceID.NotFound" {
+				if slErr := sleepOrDone(ctx); slErr != nil {
+					return nil, slErr
+				}
+				continue
+			}
 			return nil, fmt.Errorf("describe instances: %w", err)
 		}
 		var nodes []Node
@@ -128,9 +143,22 @@ func (e *Engine) waitRunning(ctx context.Context, ids []string) ([]Node, error) 
 			sort.Slice(nodes, func(i, j int) bool { return nodes[i].Index < nodes[j].Index })
 			return nodes, nil
 		}
-		time.Sleep(PollInterval)
+		if err := sleepOrDone(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return nil, fmt.Errorf("instances did not become running within %s", time.Duration(maxPolls)*PollInterval)
+}
+
+// sleepOrDone はPollIntervalだけ待つか、ctxがキャンセルされたら即座にエラーを返す。
+// Ctrl-C(SIGINT)でポーリングを打ち切れるようにするため、time.Sleepの代わりに使う。
+func sleepOrDone(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(PollInterval):
+		return nil
+	}
 }
 
 // rollback はUp途中失敗時の後始末。失敗してもTTLで自己消滅するためエラーは握りつぶす。
@@ -247,7 +275,9 @@ func (e *Engine) waitTerminated(ctx context.Context, ids []string) error {
 		if done {
 			return nil
 		}
-		time.Sleep(PollInterval)
+		if err := sleepOrDone(ctx); err != nil {
+			return err
+		}
 	}
 	return fmt.Errorf("instances did not terminate within %s", time.Duration(maxPolls)*PollInterval)
 }

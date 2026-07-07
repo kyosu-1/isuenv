@@ -27,7 +27,7 @@ isuenv down isucon13          # 環境削除
 isuenv nuke                   # isuenv管理の全リソース削除（VPC・キーペア含む）
 ```
 
-- 環境はTTL経過後に**自動でterminate**される（`shutdown -P` + terminate挙動）
+- 環境はTTL経過後に**自動でterminate**される（絶対期限をcronで毎分チェックして`shutdown -P now` + terminate挙動。rebootされても期限は再評価されるので安全）
 - SSHは `~/.ssh/isuenv_config` に自動生成される。素の `ssh isucon13-1` やVS Code Remoteも使える
 - セキュリティグループは実行時のグローバルIPのみ許可。IPが変わったら `isuenv ssh` を打ち直せば更新される
 
@@ -48,6 +48,7 @@ c5.large（デフォルト）は約$0.107/時（ap-northeast-1、2026-07時点�
 6. `./isuenv down isucon14` — 削除されること
 7. `./isuenv list` — 空になること
 8. （まれに）`./isuenv nuke` でVPCまで消えることをAWSコンソールで確認
+9. 複数台構成の疎通確認: `./isuenv up isucon13 --nodes 2` → `./isuenv ssh isucon13`（1号機）でログイン → `nc -zv <2号機のprivate ip> 22` が成功すること（SGの自己参照ルールでノード間通信が通ることの確認）→ `./isuenv down isucon13`
 
 ## 注意
 

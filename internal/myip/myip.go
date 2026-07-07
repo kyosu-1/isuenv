@@ -33,8 +33,13 @@ func Get(ctx context.Context) (string, error) {
 		return "", err
 	}
 	ip := strings.TrimSpace(string(body))
-	if net.ParseIP(ip) == nil {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
 		return "", fmt.Errorf("get global ip: invalid response %q", ip)
+	}
+	// 結果は /32 CIDR としてセキュリティグループのingressに使われるため、IPv4であることを要求する。
+	if parsed.To4() == nil {
+		return "", fmt.Errorf("get global ip: %q is not an IPv4 address", ip)
 	}
 	return ip, nil
 }

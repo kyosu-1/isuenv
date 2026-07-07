@@ -144,12 +144,26 @@ func TestEnsureIngress_ReplacesRulesWithMyIP(t *testing.T) {
 	if revoked == nil || len(revoked.IpPermissions) != 1 {
 		t.Fatalf("existing rules must be revoked: %+v", revoked)
 	}
-	if authorized == nil || len(authorized.IpPermissions) != 3 {
-		t.Fatalf("expected 3 rules (22/80/443): %+v", authorized)
+	if authorized == nil || len(authorized.IpPermissions) != 4 {
+		t.Fatalf("expected 4 rules (22/80/443 + self-referencing): %+v", authorized)
 	}
+	var sawSelfRef bool
 	for _, perm := range authorized.IpPermissions {
+		if len(perm.UserIdGroupPairs) > 0 {
+			sawSelfRef = true
+			if aws.ToString(perm.UserIdGroupPairs[0].GroupId) != "sg-1" {
+				t.Errorf("self-referencing rule must target the SG itself: %+v", perm)
+			}
+			if aws.ToString(perm.IpProtocol) != "-1" {
+				t.Errorf("self-referencing rule must allow all protocols: %+v", perm)
+			}
+			continue
+		}
 		if aws.ToString(perm.IpRanges[0].CidrIp) != "198.51.100.7/32" {
 			t.Errorf("rules must be scoped to my ip: %+v", perm)
 		}
+	}
+	if !sawSelfRef {
+		t.Error("expected a self-referencing node-to-node rule")
 	}
 }

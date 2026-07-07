@@ -182,6 +182,12 @@ func (e *Engine) EnsureIngress(ctx context.Context, sgID, myIP string) error {
 			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String(cidr), Description: aws.String("isuenv")}},
 		})
 	}
+	// ノード間通信用: SG自身からの全プロトコル許可。--nodes>1構成でプライベートIP経由の疎通に必要。
+	// EnsureIngressはup/ssh実行のたびにルールを総入れ替えするため、createNetworkではなくここに置いて維持する。
+	perms = append(perms, ec2types.IpPermission{
+		IpProtocol:       aws.String("-1"),
+		UserIdGroupPairs: []ec2types.UserIdGroupPair{{GroupId: aws.String(sgID), Description: aws.String("isuenv node-to-node")}},
+	})
 	if _, err := e.EC2.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
 		GroupId:       aws.String(sgID),
 		IpPermissions: perms,
