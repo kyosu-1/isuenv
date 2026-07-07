@@ -144,3 +144,61 @@ func (e *Engine) rollback(ids []string) {
 	defer cancel()
 	_, _ = e.EC2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: ids})
 }
+
+type Env struct {
+	Name         string
+	InstanceType string
+	LaunchedAt   time.Time
+	ExpiresAt    time.Time
+	Nodes        []Node
+}
+
+// List はisuenv管理下の稼働中環境を isuenv:env タグでグループ化して返す。
+func (e *Engine) List(ctx context.Context) ([]Env, error) {
+	out, err := e.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			managedFilter(),
+			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running"}},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("describe instances: %w", err)
+	}
+	byName := map[string]*Env{}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			name := tagValue(inst.Tags, TagEnv)
+			if name == "" {
+				continue
+			}
+			env, ok := byName[name]
+			if !ok {
+				env = &Env{Name: name, InstanceType: string(inst.InstanceType)}
+				if v := tagValue(inst.Tags, TagExpires); v != "" {
+					if ts, err := time.Parse(time.RFC3339, v); err == nil {
+						env.ExpiresAt = ts
+					}
+				}
+				byName[name] = env
+			}
+			launched := aws.ToTime(inst.LaunchTime)
+			if env.LaunchedAt.IsZero() || launched.Before(env.LaunchedAt) {
+				env.LaunchedAt = launched
+			}
+			index, _ := strconv.Atoi(tagValue(inst.Tags, TagNode))
+			env.Nodes = append(env.Nodes, Node{
+				Index:     index,
+				ID:        aws.ToString(inst.InstanceId),
+				PublicIP:  aws.ToString(inst.PublicIpAddress),
+				PrivateIP: aws.ToString(inst.PrivateIpAddress),
+			})
+		}
+	}
+	envs := make([]Env, 0, len(byName))
+	for _, env := range byName {
+		sort.Slice(env.Nodes, func(i, j int) bool { return env.Nodes[i].Index < env.Nodes[j].Index })
+		envs = append(envs, *env)
+	}
+	sort.Slice(envs, func(i, j int) bool { return envs[i].Name < envs[j].Name })
+	return envs, nil
+}

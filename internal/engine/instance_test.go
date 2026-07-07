@@ -164,3 +164,36 @@ func TestUp_EmptyRunInstancesResponseRolledBack(t *testing.T) {
 		t.Errorf("launched instance must be rolled back: %v", terminated)
 	}
 }
+
+func TestList_GroupsByEnv(t *testing.T) {
+	m := &awsapi.Mock{
+		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+			return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{
+				runningInstance("i-2", "isucon13", "2", "54.0.0.2", "10.100.0.12"),
+				runningInstance("i-1", "isucon13", "1", "54.0.0.1", "10.100.0.11"),
+				runningInstance("i-3", "isucon14", "1", "54.0.0.3", "10.100.0.13"),
+			}}}}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	envs, err := e.List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(envs) != 2 {
+		t.Fatalf("expected 2 envs, got %d: %+v", len(envs), envs)
+	}
+	if envs[0].Name != "isucon13" || envs[1].Name != "isucon14" {
+		t.Errorf("envs must be sorted by name: %+v", envs)
+	}
+	if len(envs[0].Nodes) != 2 || envs[0].Nodes[0].Index != 1 || envs[0].Nodes[1].Index != 2 {
+		t.Errorf("nodes must be sorted by index: %+v", envs[0].Nodes)
+	}
+	wantExpires := time.Date(2026, 7, 8, 18, 0, 0, 0, time.UTC)
+	if !envs[0].ExpiresAt.Equal(wantExpires) {
+		t.Errorf("expires-at tag must be parsed: %v", envs[0].ExpiresAt)
+	}
+	if envs[0].InstanceType != "c5.large" {
+		t.Errorf("instance type must be captured: %v", envs[0].InstanceType)
+	}
+}
