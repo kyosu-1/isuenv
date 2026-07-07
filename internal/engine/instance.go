@@ -202,3 +202,52 @@ func (e *Engine) List(ctx context.Context) ([]Env, error) {
 	sort.Slice(envs, func(i, j int) bool { return envs[i].Name < envs[j].Name })
 	return envs, nil
 }
+
+// Down は環境のインスタンスをterminateし、対象のインスタンスIDを返す。対象なしは成功扱い。
+func (e *Engine) Down(ctx context.Context, name string) ([]string, error) {
+	out, err := e.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			managedFilter(),
+			{Name: aws.String("tag:" + TagEnv), Values: []string{name}},
+			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("describe instances for %s: %w", name, err)
+	}
+	var ids []string
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			ids = append(ids, aws.ToString(inst.InstanceId))
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if _, err := e.EC2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: ids}); err != nil {
+		return nil, fmt.Errorf("terminate %v: %w", ids, err)
+	}
+	return ids, nil
+}
+
+func (e *Engine) waitTerminated(ctx context.Context, ids []string) error {
+	for attempt := 0; attempt < maxPolls; attempt++ {
+		out, err := e.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: ids})
+		if err != nil {
+			return fmt.Errorf("describe instances: %w", err)
+		}
+		done := true
+		for _, r := range out.Reservations {
+			for _, inst := range r.Instances {
+				if inst.State == nil || inst.State.Name != ec2types.InstanceStateNameTerminated {
+					done = false
+				}
+			}
+		}
+		if done {
+			return nil
+		}
+		time.Sleep(PollInterval)
+	}
+	return fmt.Errorf("instances did not terminate within %s", time.Duration(maxPolls)*PollInterval)
+}

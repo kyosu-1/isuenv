@@ -197,3 +197,54 @@ func TestList_GroupsByEnv(t *testing.T) {
 		t.Errorf("instance type must be captured: %v", envs[0].InstanceType)
 	}
 }
+
+func TestDown_TerminatesEnvInstances(t *testing.T) {
+	var describeIn *ec2.DescribeInstancesInput
+	var terminated []string
+	m := &awsapi.Mock{
+		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+			describeIn = in
+			return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{
+				runningInstance("i-1", "isucon13", "1", "54.0.0.1", "10.100.0.11"),
+				runningInstance("i-2", "isucon13", "2", "54.0.0.2", "10.100.0.12"),
+			}}}}, nil
+		},
+		TerminateInstancesFunc: func(ctx context.Context, in *ec2.TerminateInstancesInput) (*ec2.TerminateInstancesOutput, error) {
+			terminated = in.InstanceIds
+			return &ec2.TerminateInstancesOutput{}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	ids, err := e.Down(context.Background(), "isucon13")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 2 || len(terminated) != 2 {
+		t.Errorf("expected 2 instances terminated: ids=%v terminated=%v", ids, terminated)
+	}
+	found := false
+	for _, f := range describeIn.Filters {
+		if aws.ToString(f.Name) == "tag:"+TagEnv && f.Values[0] == "isucon13" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("describe must filter by env tag: %+v", describeIn.Filters)
+	}
+}
+
+func TestDown_NoInstancesIsNoop(t *testing.T) {
+	m := &awsapi.Mock{
+		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+			return &ec2.DescribeInstancesOutput{}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	ids, err := e.Down(context.Background(), "isucon13")
+	if err != nil {
+		t.Fatalf("down must be idempotent: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("expected no ids, got %v", ids)
+	}
+}
