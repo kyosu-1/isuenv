@@ -6,6 +6,7 @@ import (
 	"regexp"
 
 	"github.com/kyosu-1/isuenv/internal/engine"
+	"github.com/kyosu-1/isuenv/internal/myip"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +23,19 @@ var sshCmd = &cobra.Command{
 			return err
 		}
 		e := &engine.Engine{EC2: client}
+		sgID, err := e.FindManagedSecurityGroup(ctx)
+		if err != nil {
+			return err
+		}
+		if sgID != "" {
+			ip, err := myip.Get(ctx)
+			if err != nil {
+				return err
+			}
+			if err := e.EnsureIngress(ctx, sgID, ip); err != nil {
+				return err
+			}
+		}
 		if err := refreshSSHConfig(ctx, e); err != nil {
 			return err
 		}

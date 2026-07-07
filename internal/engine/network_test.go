@@ -85,6 +85,38 @@ func TestEnsureNetwork_CreatesWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestFindManagedSecurityGroup_Found(t *testing.T) {
+	m := &awsapi.Mock{
+		DescribeSecurityGroupsFunc: func(ctx context.Context, in *ec2.DescribeSecurityGroupsInput) (*ec2.DescribeSecurityGroupsOutput, error) {
+			return &ec2.DescribeSecurityGroupsOutput{SecurityGroups: []ec2types.SecurityGroup{{GroupId: aws.String("sg-1")}}}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	id, err := e.FindManagedSecurityGroup(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != "sg-1" {
+		t.Errorf("expected sg-1, got %q", id)
+	}
+}
+
+func TestFindManagedSecurityGroup_None(t *testing.T) {
+	m := &awsapi.Mock{
+		DescribeSecurityGroupsFunc: func(ctx context.Context, in *ec2.DescribeSecurityGroupsInput) (*ec2.DescribeSecurityGroupsOutput, error) {
+			return &ec2.DescribeSecurityGroupsOutput{}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	id, err := e.FindManagedSecurityGroup(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != "" {
+		t.Errorf("expected empty id, got %q", id)
+	}
+}
+
 func TestEnsureIngress_ReplacesRulesWithMyIP(t *testing.T) {
 	existing := []ec2types.IpPermission{{
 		IpProtocol: aws.String("tcp"), FromPort: aws.Int32(22), ToPort: aws.Int32(22),

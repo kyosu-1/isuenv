@@ -141,6 +141,20 @@ func (e *Engine) createNetwork(ctx context.Context) (Network, error) {
 	return Network{VpcID: vpcID, SubnetID: subnetID, SecurityGroupID: aws.ToString(sgOut.GroupId)}, nil
 }
 
+// FindManagedSecurityGroup はisuenv管理下のSGを検索する。
+// EnsureNetworkと異なりVPCなどのリソースを作成しない（ssh実行時にネットワークを新規作成しないため）。
+// 見つからない場合は空文字列とnilを返す。
+func (e *Engine) FindManagedSecurityGroup(ctx context.Context) (string, error) {
+	sgs, err := e.EC2.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{Filters: []ec2types.Filter{managedFilter()}})
+	if err != nil {
+		return "", fmt.Errorf("describe security groups: %w", err)
+	}
+	if len(sgs.SecurityGroups) == 0 {
+		return "", nil
+	}
+	return aws.ToString(sgs.SecurityGroups[0].GroupId), nil
+}
+
 // EnsureIngress はSGのingressを「myIP/32からのtcp 22/80/443のみ」に置き換える。
 func (e *Engine) EnsureIngress(ctx context.Context, sgID, myIP string) error {
 	out, err := e.EC2.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: []string{sgID}})
