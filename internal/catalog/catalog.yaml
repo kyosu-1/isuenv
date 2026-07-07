@@ -1,0 +1,61 @@
+problems:
+  - name: isucon9-qualify
+    ami_pattern: "isucon9-qualify-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    default_nodes: 1
+    notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon9-qualify"
+  - name: isucon9-final
+    ami_pattern: "isucon9-final-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    default_nodes: 1
+    notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon9-final"
+  - name: isucon10-qualify
+    ami_pattern: "isucon10-qualify-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    default_nodes: 1
+    notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon10-qualify"
+  - name: isucon10-final
+    ami_pattern: "isucon10-final-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    default_nodes: 1
+    notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon10-final"
+  - name: isucon11-qualify
+    ami_pattern: "isucon11-qualify-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    default_nodes: 1
+    notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon11-qualify"
+  - name: isucon11-final
+    ami_pattern: "isucon11-final-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    default_nodes: 1
+    notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon11-final"
+  - name: isucon12-qualify
+    ami_pattern: "isucon12-qualify-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    default_nodes: 1
+    notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon12-qualify"
+  - name: isucon12-final
+    ami_pattern: "isucon12-final-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    default_nodes: 1
+    notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon12-final"
+  - name: isucon13
+    ami_pattern: "isucon13-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    default_nodes: 1
+    notes: "本番は3台構成。bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon13"
+  - name: isucon14
+    ami_pattern: "isucon14-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    default_nodes: 1
+    notes: "本番は3台構成。bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon14"
