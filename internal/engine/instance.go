@@ -84,15 +84,20 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 			}},
 		})
 		if err != nil {
-			e.rollback(ctx, ids)
+			e.rollback(ids)
 			return nil, fmt.Errorf("launch node %d of %s: %w (launched instances were rolled back)", i, name, err)
+		}
+		if len(out.Instances) == 0 {
+			// エラーなしで空のInstancesが返るケース: out.Instances[0]への添字アクセスを避ける
+			e.rollback(ids)
+			return nil, fmt.Errorf("launch node %d of %s: empty RunInstances response (launched instances were rolled back)", i, name)
 		}
 		ids = append(ids, aws.ToString(out.Instances[0].InstanceId))
 	}
 
 	nodes, err := e.waitRunning(ctx, ids)
 	if err != nil {
-		e.rollback(ctx, ids)
+		e.rollback(ids)
 		return nil, fmt.Errorf("wait for %s: %w (instances were rolled back)", name, err)
 	}
 	return nodes, nil
@@ -129,9 +134,13 @@ func (e *Engine) waitRunning(ctx context.Context, ids []string) ([]Node, error) 
 }
 
 // rollback はUp途中失敗時の後始末。失敗してもTTLで自己消滅するためエラーは握りつぶす。
-func (e *Engine) rollback(ctx context.Context, ids []string) {
+// 呼び出し元のctxは失敗原因(タイムアウトやCtrl-Cによるキャンセル)である可能性があり、
+// それをそのまま使うとTerminateInstancesが即座に無効化されてしまうため、専用の新しいctxを使う。
+func (e *Engine) rollback(ids []string) {
 	if len(ids) == 0 {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	_, _ = e.EC2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: ids})
 }

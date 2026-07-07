@@ -134,3 +134,33 @@ func TestUp_RollbackOnLaunchFailure(t *testing.T) {
 		t.Errorf("launched instance must be rolled back: %v", terminated)
 	}
 }
+
+func TestUp_EmptyRunInstancesResponseRolledBack(t *testing.T) {
+	var terminated []string
+	callCount := 0
+	m := &awsapi.Mock{
+		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+			return &ec2.DescribeInstancesOutput{}, nil
+		},
+		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+			callCount++
+			if callCount == 2 {
+				// AWSがエラーなしで空のInstancesを返すケース(現実には稀だが起きうる)
+				return &ec2.RunInstancesOutput{}, nil
+			}
+			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String("i-1")}}}, nil
+		},
+		TerminateInstancesFunc: func(ctx context.Context, in *ec2.TerminateInstancesInput) (*ec2.TerminateInstancesOutput, error) {
+			terminated = in.InstanceIds
+			return &ec2.TerminateInstancesOutput{}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	_, err := e.Up(context.Background(), UpOptions{Problem: testProblem(), AMIID: "ami-123", Nodes: 2, InstanceType: "c5.large", TTL: time.Hour, KeyName: "isuenv", Now: time.Now()})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if len(terminated) != 1 || terminated[0] != "i-1" {
+		t.Errorf("launched instance must be rolled back: %v", terminated)
+	}
+}
