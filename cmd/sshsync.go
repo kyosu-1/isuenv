@@ -12,10 +12,16 @@ import (
 
 // refreshSSHConfig は稼働中環境から ~/.ssh/isuenv_config を再生成し、
 // ~/.ssh/config へのInclude行を保証する。
-func refreshSSHConfig(ctx context.Context, e *engine.Engine) error {
+// excludeIDs には「たった今terminateしたインスタンスID」を渡す。DescribeInstancesは結果整合性のため
+// terminate直後でも対象をrunningとして返すことがあり、除外しないと消したホストが書き戻されてしまう。
+func refreshSSHConfig(ctx context.Context, e *engine.Engine, excludeIDs ...string) error {
 	envs, err := e.List(ctx)
 	if err != nil {
 		return err
+	}
+	excluded := make(map[string]bool, len(excludeIDs))
+	for _, id := range excludeIDs {
+		excluded[id] = true
 	}
 	var hosts []sshconf.Host
 	for _, env := range envs {
@@ -24,6 +30,9 @@ func refreshSSHConfig(ctx context.Context, e *engine.Engine) error {
 			user = p.SSHUser
 		}
 		for _, n := range env.Nodes {
+			if excluded[n.ID] {
+				continue
+			}
 			hosts = append(hosts, sshconf.Host{
 				Alias:        fmt.Sprintf("%s-%d", env.Name, n.Index),
 				HostName:     n.PublicIP,
