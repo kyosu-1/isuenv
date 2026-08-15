@@ -14,7 +14,9 @@ func (e *Engine) Nuke(ctx context.Context) error {
 	out, err := e.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
 			managedFilter(),
-			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
+			// shutting-downも対象に含める。`isuenv down`直後のインスタンスはこの状態で、
+			// 見落とすと終了を待たずにSG削除へ進みDependencyViolationになる。
+			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped", "shutting-down"}},
 		},
 	})
 	if err != nil {

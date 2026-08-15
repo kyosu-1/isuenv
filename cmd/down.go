@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"io"
 
 	"github.com/kyosu-1/isuenv/internal/engine"
 	"github.com/spf13/cobra"
@@ -17,18 +19,22 @@ var downCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		e := &engine.Engine{EC2: client}
-		ids, err := e.Down(ctx, args[0])
-		if err != nil {
-			return err
-		}
-		if len(ids) == 0 {
-			fmt.Printf("No running environment %q. Nothing to do.\n", args[0])
-			return nil
-		}
-		fmt.Printf("Terminating %s: %v\n", args[0], ids)
-		return refreshSSHConfig(ctx, e)
+		return runDown(ctx, &engine.Engine{EC2: client}, args[0], cmd.OutOrStdout())
 	},
+}
+
+func runDown(ctx context.Context, e *engine.Engine, name string, w io.Writer) error {
+	ids, err := e.Down(ctx, name)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		fmt.Fprintf(w, "No running environment %q. Nothing to do.\n", name)
+	} else {
+		fmt.Fprintf(w, "Terminating %s: %v\n", name, ids)
+	}
+	// 対象なしの場合も再生成する。前回のdownで取りこぼした古いエントリをここで回収できる。
+	return refreshSSHConfig(ctx, e, ids...)
 }
 
 func init() {
