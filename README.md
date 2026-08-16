@@ -54,3 +54,10 @@ c5.large（デフォルト）は約$0.107/時（ap-northeast-1、2026-07時点�
 
 - ベンチマーカーはAMIに同梱されている。実行方法は問題ごとに異なるので `isuenv problems` のNOTESのリンク先を参照
 - 消し忘れてもTTLで自己消滅するが、`isuenv list` での確認を習慣にすること
+
+## ライセンス
+
+MIT License. 詳細は [LICENSE](LICENSE) を参照。
+
+利用しているAMIは [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon)（MIT）が公開しているもので、
+本ツールはそのAMIを起動・破棄するだけであり、AMIそのものは配布していない。
