@@ -35,7 +35,7 @@ isuenv nuke                   # isuenv管理の全リソース削除（VPC・キ
 
 | フラグ | 既定値 | 説明 |
 | --- | --- | --- |
-| `--ttl` | `8h` | この時間が経過したら自動でterminateする |
+| `--ttl` | `8h` | この時間が経過したら自動でterminateする（[挙動](#ttlの挙動)） |
 | `--nodes` | `1` | 起動台数。1以上 |
 | `--instance-type` | `c5.large` | EC2インスタンスタイプ |
 
@@ -46,7 +46,6 @@ isuenv nuke                   # isuenv管理の全リソース削除（VPC・キ
 ```sh
 isuenv up isucon13 --ttl 90m      # 90分
 isuenv up isucon13 --ttl 2h30m    # 2時間30分
-isuenv up isucon13 --ttl 24h      # 24時間
 ```
 
 **日を表す `d` は使えない。** `--ttl 1d` はエラーになるので、24時間なら `24h` と書く。
@@ -54,14 +53,6 @@ isuenv up isucon13 --ttl 24h      # 24時間
 ```
 Error: invalid argument "1d" for "--ttl" flag: time: unknown unit "d" in duration "1d"
 ```
-
-TTLの実体はインスタンス内の仕組みで、CLIやローカルPCは一切関与しない。
-
-1. 起動時のuser-dataが絶対期限（UNIX時刻）を `/var/lib/isuenv-expires-at` に書く
-2. `/etc/cron.d/isuenv-ttl` が毎分その時刻を過ぎたか判定し、過ぎていれば `shutdown -P now`
-3. インスタンスは `instance-initiated-shutdown-behavior=terminate` で起動しているため、停止ではなく**terminate**される（EBSごと消えるので課金が完全に止まる）
-
-絶対時刻をディスクに持つので、**リブートしても期限は維持される**。判定が毎分なので、実際にterminateされるのは期限から1分程度あと。ノートPCを閉じてもCLIを終了しても効く。
 
 ### `isuenv list`
 
@@ -90,7 +81,7 @@ TTLの実体はインスタンス内の仕組みで、CLIやローカルPCは一
 
 ### `isuenv down <問題名>`
 
-その環境のインスタンスをterminateする。VPC・サブネット・SG・キーペアは残るので、次の `up` で再利用される（これらは無料）。対象が無い場合も成功扱い。
+その環境のインスタンスをterminateする。VPC・サブネット・SG・キーペアは残るので、次の `up` で再利用される。対象が無い場合も成功扱い。
 
 ### `isuenv nuke`
 
@@ -99,6 +90,16 @@ isuenv管理下の**全リソース**を削除する。`yes` の入力を求め�
 ### `isuenv problems`
 
 対応している過去問と、SSHユーザー、ベンチ手順へのリンクを一覧する。
+
+## TTLの挙動
+
+TTLの実体はインスタンス内の仕組みで、次の3段構えで動く。
+
+1. 起動時のuser-dataが絶対期限（UNIX時刻）を `/var/lib/isuenv-expires-at` に書く
+2. `/etc/cron.d/isuenv-ttl` が毎分その時刻を過ぎたか判定し、過ぎていれば `shutdown -P now`
+3. インスタンスは `instance-initiated-shutdown-behavior=terminate` で起動しているため、停止ではなく**terminate**される（EBSごと消えるので課金が完全に止まる）
+
+絶対時刻をディスクに持つので、**リブートしても期限は維持される**。判定が毎分なので、実際にterminateされるのは期限から1分程度あと。**ノートPCを閉じてもCLIを終了しても効く。**
 
 ## 作成されるリソース
 
@@ -119,11 +120,11 @@ AWS上のリソースはすべて `isuenv:managed=true` タグが付き、`nuke`
 
 | パス | 内容 |
 | --- | --- |
-| `~/.ssh/isuenv.pem` | キーペアの秘密鍵（`0600`）。キーペア作成時に一度だけ書かれる |
+| `~/.ssh/isuenv.pem` | キーペアの秘密鍵（`0600`）。AWS側にキーペアが無いときに作成され、**このファイルも上書きされる**（`nuke` 後の `up` など） |
 | `~/.ssh/isuenv_config` | ホスト定義。`up` / `ssh` / `down` のたびに再生成される |
-| `~/.ssh/config` | 先頭に `Include ~/.ssh/isuenv_config` を一度だけ追加 |
+| `~/.ssh/config` | 先頭に `Include` 行を一度だけ追加（パスは絶対パスで書かれる） |
 
-**課金されるのはEC2インスタンスとEBSだけ**で、VPC・サブネット・IGW・SG・キーペアは無料。そのため `down` 後にVPCが残っていても費用は発生しない。
+VPC・サブネット・IGW・SG・キーペアは**無料**なので、`down` 後にこれらが残っていても費用は発生しない。
 
 ## コストの目安
 
