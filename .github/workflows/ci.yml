@@ -35,3 +35,52 @@ jobs:
 
       - name: Test
         run: go test -count=1 ./...
+
+  # リリース設定が壊れたままタグを切ると、タグを打ち直すまで復旧できない。
+  # 設定の検証とスナップショットビルドをPR時点で回しておく。
+  release-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Validate goreleaser config
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: check
+
+      # build だけではアーカイブとCaskのテンプレートを通らない。公開を伴わない
+      # release --snapshot なら本番と同じパイプラインを最後まで流せる。
+      - name: Snapshot release
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean
+        env:
+          # snapshotではtapへpushしないので値は使われないが、テンプレートの
+          # {{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }} を解決するために定義は必要。
+          HOMEBREW_TAP_GITHUB_TOKEN: dummy
+
+      - name: Verify homebrew cask was generated
+        run: test -f dist/homebrew/Casks/isuenv.rb && cat dist/homebrew/Casks/isuenv.rb
+
+      # ldflagsの -X はシンボル名が間違っていてもエラーにならず、versionが黙って
+      # "dev" のままになる。cmdパッケージのパスを変えた場合などをここで検知する。
+      - name: Verify version is injected
+        run: |
+          bin=$(find dist -type f -name isuenv -path '*linux_amd64*' | head -n 1)
+          echo "binary: $bin"
+          out=$("$bin" version)
+          echo "output: $out"
+          case "$out" in
+            *dev*|*"(none, unknown)"*)
+              echo "ldflags injection is broken: version was not stamped" >&2
+              exit 1
+              ;;
+          esac
