@@ -1,0 +1,63 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  # isuenvは ~/.ssh 配下にpemを0600で書き、sshをexecする作りなのでUnix前提。
+  # Windowsは未検証のためビルド対象から外している。
+  - binary: isuenv
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      # .Version は先頭のvが落ちるため、`go install` 経由(ビルド情報は "v0.1.0")と
+      # 表示を揃える目的で .Tag を使う。
+      - -s -w
+      - -X github.com/kyosu-1/isuenv/cmd.version={{ .Tag }}
+      - -X github.com/kyosu-1/isuenv/cmd.commit={{ .ShortCommit }}
+      - -X github.com/kyosu-1/isuenv/cmd.date={{ .Date }}
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+# goreleaser v2で `brews`(Formula)は非推奨になった。ビルド済みバイナリの配布は
+# Caskが正となる。CaskはmacOS専用なので、Linuxのbrewからは入らなくなる
+# （Linuxは go install かReleasesのtarballを使う）。
+homebrew_casks:
+  - repository:
+      owner: kyosu-1
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/kyosu-1/isuenv
+    description: CLI to create and destroy ISUCON practice environments on AWS EC2
+    url:
+      # homepageとダウンロード元ドメインが一致していることを明示し brew audit を通す
+      verified: github.com/kyosu-1/isuenv/
+    # バイナリは署名・notarizeしていないため、そのままだとGatekeeperの隔離属性で
+    # 「壊れている」と言われて起動できない。インストール後に属性を落とす。
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/isuenv"]
+          end
