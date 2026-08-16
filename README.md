@@ -27,9 +27,103 @@ isuenv down isucon13          # 環境削除
 isuenv nuke                   # isuenv管理の全リソース削除（VPC・キーペア含む）
 ```
 
-- 環境はTTL経過後に**自動でterminate**される（絶対期限をcronで毎分チェックして`shutdown -P now` + terminate挙動。rebootされても期限は再評価されるので安全）
-- SSHは `~/.ssh/isuenv_config` に自動生成される。素の `ssh isucon13-1` やVS Code Remoteも使える
-- セキュリティグループは実行時のグローバルIPのみ許可。IPが変わったら `isuenv ssh` を打ち直せば更新される
+## コマンドリファレンス
+
+### `isuenv up <問題名> [flags]`
+
+環境を作成し、全ノードがrunningかつパブリックIPが付くまで待ってから結果を表示する。
+
+| フラグ | 既定値 | 説明 |
+| --- | --- | --- |
+| `--ttl` | `8h` | この時間が経過したら自動でterminateする |
+| `--nodes` | `1` | 起動台数。1以上 |
+| `--instance-type` | `c5.large` | EC2インスタンスタイプ |
+
+同名の環境が既にある場合は起動せずエラーになる。作り直すときは先に `down` する。
+
+**`--ttl` の書式は Go の duration 文字列**で、単位は `h` / `m` / `s`。組み合わせもできる。
+
+```sh
+isuenv up isucon13 --ttl 90m      # 90分
+isuenv up isucon13 --ttl 2h30m    # 2時間30分
+isuenv up isucon13 --ttl 24h      # 24時間
+```
+
+**日を表す `d` は使えない。** `--ttl 1d` はエラーになるので、24時間なら `24h` と書く。
+
+```
+Error: invalid argument "1d" for "--ttl" flag: time: unknown unit "d" in duration "1d"
+```
+
+TTLの実体はインスタンス内の仕組みで、CLIやローカルPCは一切関与しない。
+
+1. 起動時のuser-dataが絶対期限（UNIX時刻）を `/var/lib/isuenv-expires-at` に書く
+2. `/etc/cron.d/isuenv-ttl` が毎分その時刻を過ぎたか判定し、過ぎていれば `shutdown -P now`
+3. インスタンスは `instance-initiated-shutdown-behavior=terminate` で起動しているため、停止ではなく**terminate**される（EBSごと消えるので課金が完全に止まる）
+
+絶対時刻をディスクに持つので、**リブートしても期限は維持される**。判定が毎分なので、実際にterminateされるのは期限から1分程度あと。ノートPCを閉じてもCLIを終了しても効く。
+
+### `isuenv list`
+
+稼働中の環境を一覧する。
+
+| 列 | 内容 |
+| --- | --- |
+| `ENV` | 問題名 |
+| `NODES` | 台数 |
+| `TYPE` | インスタンスタイプ |
+| `UPTIME` | 起動からの経過時間 |
+| `EST COST` | 概算費用。あくまで目安 |
+| `TTL LEFT` | 自動terminateまでの残り時間 |
+| `PUBLIC IPS` | 各ノードのパブリックIP |
+
+### `isuenv ssh <問題名>[-N]`
+
+ノードにSSHする。番号を省略すると1号機に繋ぐ（`isucon13` = `isucon13-1`）。
+
+実行のたびに次の2つを行うので、**グローバルIPが変わったら打ち直せば復旧する**。
+
+- セキュリティグループのingressを、現在のグローバルIPで貼り直す
+- `~/.ssh/isuenv_config` を稼働中の環境から再生成する
+
+生成されたssh configは `~/.ssh/config` からIncludeされるので、素の `ssh isucon13-1` やVS Code Remoteからも使える。
+
+### `isuenv down <問題名>`
+
+その環境のインスタンスをterminateする。VPC・サブネット・SG・キーペアは残るので、次の `up` で再利用される（これらは無料）。対象が無い場合も成功扱い。
+
+### `isuenv nuke`
+
+isuenv管理下の**全リソース**を削除する。`yes` の入力を求められる。インスタンスの終了を待ってから、キーペア・SG・サブネット・IGW・VPCの順に消す。
+
+### `isuenv problems`
+
+対応している過去問と、SSHユーザー、ベンチ手順へのリンクを一覧する。
+
+## 作成されるリソース
+
+AWS上のリソースはすべて `isuenv:managed=true` タグが付き、`nuke` の対象はこのタグで判定される。
+
+| リソース | 内容 |
+| --- | --- |
+| VPC | `10.100.0.0/16` |
+| サブネット | `10.100.0.0/24`（パブリックIP自動割当ON） |
+| インターネットゲートウェイ | VPCにアタッチし、メインルートテーブルに `0.0.0.0/0` を向ける |
+| セキュリティグループ | 名前 `isuenv`。**実行時のグローバルIP/32からのtcp 22/80/443** と、**自身のSGからの全プロトコル**（ノード間通信用） |
+| キーペア | 名前 `isuenv` |
+| EC2インスタンス | `--nodes` の台数 |
+
+インスタンスには `isuenv:env`（問題名）、`isuenv:node`（何号機か）、`isuenv:expires-at`（TTLの絶対期限）のタグが付く。CLIはローカルに状態を持たず、すべてこれらのタグから復元する。
+
+ローカルには次のファイルが作られる。
+
+| パス | 内容 |
+| --- | --- |
+| `~/.ssh/isuenv.pem` | キーペアの秘密鍵（`0600`）。キーペア作成時に一度だけ書かれる |
+| `~/.ssh/isuenv_config` | ホスト定義。`up` / `ssh` / `down` のたびに再生成される |
+| `~/.ssh/config` | 先頭に `Include ~/.ssh/isuenv_config` を一度だけ追加 |
+
+**課金されるのはEC2インスタンスとEBSだけ**で、VPC・サブネット・IGW・SG・キーペアは無料。そのため `down` 後にVPCが残っていても費用は発生しない。
 
 ## コストの目安
 
