@@ -24,9 +24,9 @@ func init() {
 
 func renderProblems(w io.Writer) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSSH USER\tNOTES")
+	fmt.Fprintln(tw, "NAME\tSSH USER\tTYPE\tNOTES")
 	for _, p := range catalog.List() {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", p.Name, p.SSHUser, p.Notes)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.Name, p.SSHUser, p.InstanceType, p.Notes)
 	}
 	tw.Flush()
 }

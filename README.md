@@ -1,7 +1,7 @@
 # isuenv
 
-ISUCON過去問の練習環境（[matsuu/aws-isucon](https://github.com/matsuu/aws-isucon) の公開AMI）を
-AWS EC2上にコマンド一発で構築・破棄するCLI。
+ISUCON過去問と[private-isu](https://github.com/catatsuy/private-isu)の練習環境を、
+公開AMIからAWS EC2上にコマンド一発で構築・破棄するCLI。
 
 ## インストール
 
@@ -28,8 +28,9 @@ go install github.com/kyosu-1/isuenv@latest
 ## 使い方
 
 ```sh
-isuenv problems               # 対応過去問一覧
+isuenv problems               # 対応問題一覧
 isuenv up isucon13            # 環境作成（1台, TTL 8h, c5.large）
+isuenv up private-isu         # private-isu（1台, TTL 8h, c7a.large）
 isuenv up isucon13 --nodes 3  # 本番同様の3台構成
 isuenv list                   # 稼働中環境と概算コスト・残りTTL
 isuenv ssh isucon13           # 1号機にSSH（isucon13-2 で2号機）
@@ -48,7 +49,7 @@ isuenv version                # バージョン表示
 | --- | --- | --- |
 | `--ttl` | `8h` | この時間が経過したら自動でterminateする（[挙動](#ttlの挙動)） |
 | `--nodes` | `1` | 起動台数。1以上 |
-| `--instance-type` | `c5.large` | EC2インスタンスタイプ |
+| `--instance-type` | 問題ごと | EC2インスタンスタイプ。既定値は問題ごとに異なり、`isuenv problems` の TYPE 列で確認できる（ほとんどは `c5.large`、private-isuは推奨に合わせて `c7a.large`） |
 
 同名の環境が既にある場合は起動せずエラーになる。作り直すときは先に `down` する。
 
@@ -100,7 +101,7 @@ isuenv管理下の**全リソース**を削除する。`yes` の入力を求め�
 
 ### `isuenv problems`
 
-対応している過去問と、SSHユーザー、ベンチ手順へのリンクを一覧する。
+対応している問題と、SSHユーザー、既定のインスタンスタイプ、ベンチ手順へのリンクを一覧する。
 
 ## TTLの挙動
 
@@ -139,7 +140,8 @@ VPC・サブネット・IGW・SG・キーペアは**無料**なので、`down` �
 
 ## コストの目安
 
-c5.large（デフォルト）は約$0.107/時（ap-northeast-1、2026-07時点の概算）。
+ap-northeast-1のオンデマンド概算で、c5.large（多くの問題の既定）が約$0.107/時、
+c7a.large（private-isuの既定）が約$0.129/時。
 `isuenv list` の EST COST は概算であり、実際の課金はAWSの請求を確認すること。
 
 ## 手動E2E検証手順
@@ -155,6 +157,26 @@ c5.large（デフォルト）は約$0.107/時（ap-northeast-1、2026-07時点�
 7. `./isuenv list` — 空になること
 8. （まれに）`./isuenv nuke` でVPCまで消えることをAWSコンソールで確認
 9. 複数台構成の疎通確認: `./isuenv up isucon13 --nodes 2` → `./isuenv ssh isucon13`（1号機）でログイン → `nc -zv <2号機のprivate ip> 22` が成功すること（SGの自己参照ルールでノード間通信が通ることの確認）→ `./isuenv down isucon13`
+
+### private-isu
+
+private-isuは提供元AMIがmatsuu/aws-isuconと別物なので、TTL（user-data）が効くかを個別に確認する。
+
+1. `./isuenv up private-isu --ttl 15m` — `c7a.large` で起動すること
+2. `./isuenv list` — EST COST が `-` でなく金額で出ること（`cost.go` に c7a.large の単価があること）
+3. `./isuenv ssh private-isu` — ログインでき、ブラウザで `http://<public ip>` が見えること
+4. **TTLの実体確認**（ここが効かないと課金が止まらない）:
+   ```sh
+   cat /var/lib/isuenv-expires-at   # UNIX時刻が入っていること
+   ls -l /etc/cron.d/isuenv-ttl     # 存在すること
+   ```
+5. ベンチが通ること:
+   ```sh
+   sudo su - isucon
+   /home/isucon/private_isu/benchmarker/bin/benchmarker \
+     -u /home/isucon/private_isu/benchmarker/userdata -t http://localhost
+   ```
+6. 15分後に実際にterminateされること（`./isuenv list` が空になる）
 
 ## リリース手順
 
@@ -181,5 +203,6 @@ git push origin v0.1.0
 
 MIT License. 詳細は [LICENSE](LICENSE) を参照。
 
-利用しているAMIは [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon)（MIT）が公開しているもので、
-本ツールはそのAMIを起動・破棄するだけであり、AMIそのものは配布していない。
+利用しているAMIは [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon)（MIT）と
+[catatsuy/private-isu](https://github.com/catatsuy/private-isu)（MIT）が公開しているもので、
+本ツールはそれらのAMIを起動・破棄するだけであり、AMIそのものは配布していない。
