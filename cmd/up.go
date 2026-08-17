@@ -54,9 +54,10 @@ var upCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Launching %d node(s) of %s (%s, TTL %s)...\n", upNodes, p.Name, upInstanceType, upTTL)
+		instanceType := resolveInstanceType(upInstanceType, p)
+		fmt.Printf("Launching %d node(s) of %s (%s, TTL %s)...\n", upNodes, p.Name, instanceType, upTTL)
 		nodes, err := e.Up(ctx, engine.UpOptions{
-			Problem: p, AMIID: ami, Nodes: upNodes, InstanceType: upInstanceType,
+			Problem: p, AMIID: ami, Nodes: upNodes, InstanceType: instanceType,
 			TTL: upTTL, KeyName: key, Net: net, Now: time.Now(),
 		})
 		if err != nil {
@@ -78,9 +79,19 @@ var upCmd = &cobra.Command{
 	},
 }
 
+// resolveInstanceType は --instance-type の明示指定を優先し、未指定(空)なら問題ごとの推奨値を使う。
+// 推奨値は問題によって異なる(private-isuはc7a.large)ため、フラグの既定値には持たせられない。
+func resolveInstanceType(flagValue string, p catalog.Problem) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return p.InstanceType
+}
+
 func init() {
 	upCmd.Flags().IntVar(&upNodes, "nodes", 1, "number of nodes to launch")
 	upCmd.Flags().DurationVar(&upTTL, "ttl", 8*time.Hour, "auto-terminate after this duration")
-	upCmd.Flags().StringVar(&upInstanceType, "instance-type", "c5.large", "EC2 instance type")
+	// 説明文のバックティックはcobraが引数プレースホルダ名として解釈するため使わない。
+	upCmd.Flags().StringVar(&upInstanceType, "instance-type", "", "EC2 instance type (default: per-problem, see 'isuenv problems')")
 	rootCmd.AddCommand(upCmd)
 }
