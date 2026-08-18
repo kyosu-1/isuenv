@@ -11,9 +11,17 @@ import (
 	"github.com/kyosu-1/isuenv/internal/catalog"
 )
 
-// ResolveAMI は問題のAMI名パターンと所有者から最新のAMI IDを解決する。
+// AMI は解決したAMIのIDと名前。名前はどのイメージで起動したかを利用者に示すために持つ。
+// 上流(matsuu/aws-isucon)は同じ名前パターンのままAMIを差し替えるので、IDだけでは
+// 手元がどの世代を掴んでいるか分からない。
+type AMI struct {
+	ID   string
+	Name string
+}
+
+// ResolveAMI は問題のAMI名パターンと所有者から最新のAMIを解決する。
 // 古い過去問AMIはdeprecated扱いのため IncludeDeprecated が必須。
-func (e *Engine) ResolveAMI(ctx context.Context, p catalog.Problem) (string, error) {
+func (e *Engine) ResolveAMI(ctx context.Context, p catalog.Problem) (AMI, error) {
 	out, err := e.EC2.DescribeImages(ctx, &ec2.DescribeImagesInput{
 		Owners:            []string{p.OwnerID},
 		IncludeDeprecated: aws.Bool(true),
@@ -23,13 +31,16 @@ func (e *Engine) ResolveAMI(ctx context.Context, p catalog.Problem) (string, err
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("describe images for %s: %w", p.Name, err)
+		return AMI{}, fmt.Errorf("describe images for %s: %w", p.Name, err)
 	}
 	if len(out.Images) == 0 {
-		return "", fmt.Errorf("no AMI found for %s (owner %s, pattern %s)", p.Name, p.OwnerID, p.AMIPattern)
+		return AMI{}, fmt.Errorf("no AMI found for %s (owner %s, pattern %s)", p.Name, p.OwnerID, p.AMIPattern)
 	}
 	sort.Slice(out.Images, func(i, j int) bool {
 		return aws.ToString(out.Images[i].CreationDate) > aws.ToString(out.Images[j].CreationDate)
 	})
-	return aws.ToString(out.Images[0].ImageId), nil
+	return AMI{
+		ID:   aws.ToString(out.Images[0].ImageId),
+		Name: aws.ToString(out.Images[0].Name),
+	}, nil
 }

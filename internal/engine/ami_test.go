@@ -17,20 +17,24 @@ func TestResolveAMI_PicksLatestAndSetsRequiredParams(t *testing.T) {
 		DescribeImagesFunc: func(ctx context.Context, in *ec2.DescribeImagesInput) (*ec2.DescribeImagesOutput, error) {
 			got = in
 			return &ec2.DescribeImagesOutput{Images: []ec2types.Image{
-				{ImageId: aws.String("ami-old"), CreationDate: aws.String("2023-11-28T10:22:23.000Z")},
-				{ImageId: aws.String("ami-new"), CreationDate: aws.String("2024-12-11T11:26:39.000Z")},
+				{ImageId: aws.String("ami-old"), Name: aws.String("isucon14-20241211104817"), CreationDate: aws.String("2024-12-11T11:26:39.000Z")},
+				{ImageId: aws.String("ami-new"), Name: aws.String("isucon14-20260818100152"), CreationDate: aws.String("2026-08-18T10:42:25.000Z")},
 			}}, nil
 		},
 	}
 	e := &Engine{EC2: m}
 	p := catalog.Problem{Name: "isucon14", AMIPattern: "isucon14-*", OwnerID: "839726181030"}
 
-	id, err := e.ResolveAMI(context.Background(), p)
+	ami, err := e.ResolveAMI(context.Background(), p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if id != "ami-new" {
-		t.Errorf("expected latest ami-new, got %s", id)
+	if ami.ID != "ami-new" {
+		t.Errorf("expected latest ami-new, got %s", ami.ID)
+	}
+	// 上流が同じパターンのままAMIを差し替えることがあるので、どのイメージを掴んだかを名前でも示せるようにする。
+	if ami.Name != "isucon14-20260818100152" {
+		t.Errorf("expected the name of the latest AMI, got %s", ami.Name)
 	}
 	if len(got.Owners) != 1 || got.Owners[0] != "839726181030" {
 		t.Errorf("owner must be pinned: %v", got.Owners)
