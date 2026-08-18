@@ -38,6 +38,7 @@ var upCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		fmt.Println(resolvedAMILine(ami))
 		fmt.Println("Ensuring network...")
 		net, err := e.EnsureNetwork(ctx)
 		if err != nil {
@@ -57,7 +58,7 @@ var upCmd = &cobra.Command{
 		instanceType := resolveInstanceType(upInstanceType, p)
 		fmt.Printf("Launching %d node(s) of %s (%s, TTL %s)...\n", upNodes, p.Name, instanceType, upTTL)
 		nodes, err := e.Up(ctx, engine.UpOptions{
-			Problem: p, AMIID: ami, Nodes: upNodes, InstanceType: instanceType,
+			Problem: p, AMIID: ami.ID, Nodes: upNodes, InstanceType: instanceType,
 			TTL: upTTL, KeyName: key, Net: net, Now: time.Now(),
 		})
 		if err != nil {
@@ -77,6 +78,15 @@ var upCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// resolvedAMILine は解決したAMIを1行で表す。上流は同じ名前パターンのままAMIを差し替えるため、
+// どのイメージで起動したかをここで示さないと手元から確認できない。
+func resolvedAMILine(a engine.AMI) string {
+	if a.Name == "" {
+		return fmt.Sprintf("  -> %s", a.ID)
+	}
+	return fmt.Sprintf("  -> %s (%s)", a.ID, a.Name)
 }
 
 // resolveInstanceType は --instance-type の明示指定を優先し、未指定(空)なら問題ごとの推奨値を使う。

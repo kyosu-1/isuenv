@@ -45,6 +45,16 @@ isuenv version                # バージョン表示
 
 環境を作成し、全ノードがrunningかつパブリックIPが付くまで待ってから結果を表示する。
 
+起動に使うAMIは問題ごとの名前パターンで**毎回いちばん新しいものが選ばれる**（AMI IDは固定していない）。
+上流が同じパターンのままAMIを差し替えることがあるので、解決したAMIのIDと名前を起動前に表示する。
+
+```
+$ isuenv up isucon14
+Resolving AMI for isucon14...
+  -> ami-0fcf9e8e8675a9ee4 (isucon14-20260818100152)
+Ensuring network...
+```
+
 | フラグ | 既定値 | 説明 |
 | --- | --- | --- |
 | `--ttl` | `8h` | この時間が経過したら自動でterminateする（[挙動](#ttlの挙動)） |
