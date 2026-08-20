@@ -55,4 +55,7 @@ problems:
     owner_id: "459514135530"
     ssh_user: ubuntu
     instance_type: c7a.large
-    notes: "ベンチ同梱で1台完結。bench手順: https://github.com/catatsuy/private-isu#ami"
+    # 上流のREADMEが「競技 c7a.large / ベンチ c7a.xlarge」を推奨している。
+    # ベンチ側が先にCPU飽和するとスコアが負荷生成側の性能で頭打ちになるため、ベンチは1段上にする。
+    bench_instance_type: c7a.xlarge
+    notes: "ベンチ同梱で1台完結。--bench で専用ベンチノードを追加。bench手順: https://github.com/catatsuy/private-isu#ami"

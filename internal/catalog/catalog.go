@@ -22,7 +22,11 @@ type Problem struct {
 	// InstanceType は問題ごとの推奨インスタンスタイプ。省略時は List() が DefaultInstanceType で埋めるため、
 	// List()/Lookup() の戻り値では常に非空。
 	InstanceType string `yaml:"instance_type"`
-	Notes        string `yaml:"notes"`
+	// BenchInstanceType はベンチマーカー専用ノードの推奨インスタンスタイプ。
+	// 上流が明確な推奨値を出している問題にだけ設定する。空の問題で `up --bench` を使うには
+	// --bench-instance-type での明示指定が要る(勝手な推奨値を作らないため、既定値では埋めない)。
+	BenchInstanceType string `yaml:"bench_instance_type"`
+	Notes             string `yaml:"notes"`
 }
 
 type catalogFile struct {

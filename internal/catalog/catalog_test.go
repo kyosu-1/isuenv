@@ -69,4 +69,22 @@ func TestLookupPrivateISU(t *testing.T) {
 	if p.InstanceType != "c7a.large" {
 		t.Errorf("instance type = %q, want c7a.large", p.InstanceType)
 	}
+	// 上流READMEの推奨(競技 c7a.large / ベンチ c7a.xlarge)。ベンチ側が先に飽和すると
+	// スコアが負荷生成側の性能で頭打ちになるため、ベンチは1段上のタイプにする。
+	if p.BenchInstanceType != "c7a.xlarge" {
+		t.Errorf("bench instance type = %q, want c7a.xlarge", p.BenchInstanceType)
+	}
+}
+
+// ベンチ用タイプは推奨値の根拠がある問題にだけ設定する。無根拠な既定値を配らないため、
+// private-isu 以外は空のままであることを確かめる。
+func TestBenchInstanceTypeOnlyWhereRecommended(t *testing.T) {
+	for _, p := range List() {
+		if p.Name == "private-isu" {
+			continue
+		}
+		if p.BenchInstanceType != "" {
+			t.Errorf("problem %s should not have a bench instance type: %q", p.Name, p.BenchInstanceType)
+		}
+	}
 }

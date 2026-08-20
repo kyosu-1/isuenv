@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -22,10 +23,13 @@ var PollInterval = 5 * time.Second
 const maxPolls = 60
 
 type Node struct {
-	Index     int
-	ID        string
-	PublicIP  string
-	PrivateIP string
+	Index        int
+	ID           string
+	PublicIP     string
+	PrivateIP    string
+	InstanceType string
+	// Role は RoleApp か RoleBench。isuenv:role タグを持たない古いインスタンスでは空になる。
+	Role string
 }
 
 type UpOptions struct {
@@ -33,10 +37,34 @@ type UpOptions struct {
 	AMIID        string
 	Nodes        int
 	InstanceType string
-	TTL          time.Duration
-	KeyName      string
-	Net          Network
-	Now          time.Time
+	// BenchInstanceType が非空なら、競技ノードの次の番号でベンチマーカー用ノードを1台追加する。
+	// 空ならベンチノードは作らない。
+	BenchInstanceType string
+	TTL               time.Duration
+	KeyName           string
+	Net               Network
+	Now               time.Time
+}
+
+// launch は1インスタンスの起動内容。RunInstancesの引数が(番号, タイプ, ロール)でしか
+// 変わらないので、起動ループの中で分岐させずに先に組み立てておく。
+type launch struct {
+	index        int
+	instanceType string
+	role         string
+}
+
+// buildLaunches は起動するインスタンスの一覧を組み立てる。
+// ベンチノードの番号を競技ノードの次にするのは、sshのホスト名を <問題名>-<番号> のまま保つため。
+func buildLaunches(opts UpOptions) []launch {
+	launches := make([]launch, 0, opts.Nodes+1)
+	for i := 1; i <= opts.Nodes; i++ {
+		launches = append(launches, launch{index: i, instanceType: opts.InstanceType, role: RoleApp})
+	}
+	if opts.BenchInstanceType != "" {
+		launches = append(launches, launch{index: opts.Nodes + 1, instanceType: opts.BenchInstanceType, role: RoleBench})
+	}
+	return launches
 }
 
 // Up は環境を起動し、全ノードがrunningかつパブリックIP付与済みになるまで待つ。
@@ -67,10 +95,10 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 	userData := base64.StdEncoding.EncodeToString([]byte(BuildUserData(expiresAt)))
 
 	var ids []string
-	for i := 1; i <= opts.Nodes; i++ {
+	for _, l := range buildLaunches(opts) {
 		out, err := e.EC2.RunInstances(ctx, &ec2.RunInstancesInput{
 			ImageId:                           aws.String(opts.AMIID),
-			InstanceType:                      ec2types.InstanceType(opts.InstanceType),
+			InstanceType:                      ec2types.InstanceType(l.instanceType),
 			MinCount:                          aws.Int32(1),
 			MaxCount:                          aws.Int32(1),
 			KeyName:                           aws.String(opts.KeyName),
@@ -83,20 +111,21 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 				Tags: []ec2types.Tag{
 					{Key: aws.String(TagManaged), Value: aws.String("true")},
 					{Key: aws.String(TagEnv), Value: aws.String(name)},
-					{Key: aws.String(TagNode), Value: aws.String(strconv.Itoa(i))},
+					{Key: aws.String(TagNode), Value: aws.String(strconv.Itoa(l.index))},
 					{Key: aws.String(TagExpires), Value: aws.String(expires)},
-					{Key: aws.String("Name"), Value: aws.String(fmt.Sprintf("%s-%d", name, i))},
+					{Key: aws.String(TagRole), Value: aws.String(l.role)},
+					{Key: aws.String("Name"), Value: aws.String(fmt.Sprintf("%s-%d", name, l.index))},
 				},
 			}},
 		})
 		if err != nil {
 			e.rollback(ids)
-			return nil, fmt.Errorf("launch node %d of %s: %w (launched instances were rolled back)", i, name, err)
+			return nil, fmt.Errorf("launch node %d of %s: %w (launched instances were rolled back)", l.index, name, err)
 		}
 		if len(out.Instances) == 0 {
 			// エラーなしで空のInstancesが返るケース: out.Instances[0]への添字アクセスを避ける
 			e.rollback(ids)
-			return nil, fmt.Errorf("launch node %d of %s: empty RunInstances response (launched instances were rolled back)", i, name)
+			return nil, fmt.Errorf("launch node %d of %s: empty RunInstances response (launched instances were rolled back)", l.index, name)
 		}
 		ids = append(ids, aws.ToString(out.Instances[0].InstanceId))
 	}
@@ -131,12 +160,7 @@ func (e *Engine) waitRunning(ctx context.Context, ids []string) ([]Node, error) 
 					continue
 				}
 				index, _ := strconv.Atoi(tagValue(inst.Tags, TagNode))
-				nodes = append(nodes, Node{
-					Index:     index,
-					ID:        aws.ToString(inst.InstanceId),
-					PublicIP:  aws.ToString(inst.PublicIpAddress),
-					PrivateIP: aws.ToString(inst.PrivateIpAddress),
-				})
+				nodes = append(nodes, newNode(index, inst))
 			}
 		}
 		if len(nodes) == len(ids) {
@@ -174,11 +198,52 @@ func (e *Engine) rollback(ids []string) {
 }
 
 type Env struct {
-	Name         string
-	InstanceType string
-	LaunchedAt   time.Time
-	ExpiresAt    time.Time
-	Nodes        []Node
+	Name       string
+	LaunchedAt time.Time
+	ExpiresAt  time.Time
+	Nodes      []Node
+}
+
+// InstanceTypeSummary は環境のインスタンスタイプを1行で表す。
+// ベンチノードだけ別タイプという構成がありうるので、環境に単一のタイプを持たせるのではなく
+// ノードごとのタイプから組み立てる。
+func (env Env) InstanceTypeSummary() string {
+	var app, bench []string
+	for _, n := range env.Nodes {
+		// isuenv:role タグを持たない古いインスタンスは競技ノードとして扱う。
+		if n.Role == RoleBench {
+			bench = appendUnique(bench, n.InstanceType)
+			continue
+		}
+		app = appendUnique(app, n.InstanceType)
+	}
+	summary := strings.Join(app, ",")
+	if len(bench) > 0 {
+		summary += " +bench " + strings.Join(bench, ",")
+	}
+	return strings.TrimSpace(summary)
+}
+
+func appendUnique(list []string, v string) []string {
+	for _, existing := range list {
+		if existing == v {
+			return list
+		}
+	}
+	return append(list, v)
+}
+
+// newNode はDescribeInstancesの結果から1ノードを組み立てる。waitRunningとListで
+// 同じ埋め方をする必要があるため関数に切り出している。
+func newNode(index int, inst ec2types.Instance) Node {
+	return Node{
+		Index:        index,
+		ID:           aws.ToString(inst.InstanceId),
+		PublicIP:     aws.ToString(inst.PublicIpAddress),
+		PrivateIP:    aws.ToString(inst.PrivateIpAddress),
+		InstanceType: string(inst.InstanceType),
+		Role:         tagValue(inst.Tags, TagRole),
+	}
 }
 
 // List はisuenv管理下の稼働中環境を isuenv:env タグでグループ化して返す。
@@ -201,7 +266,7 @@ func (e *Engine) List(ctx context.Context) ([]Env, error) {
 			}
 			env, ok := byName[name]
 			if !ok {
-				env = &Env{Name: name, InstanceType: string(inst.InstanceType)}
+				env = &Env{Name: name}
 				if v := tagValue(inst.Tags, TagExpires); v != "" {
 					if ts, err := time.Parse(time.RFC3339, v); err == nil {
 						env.ExpiresAt = ts
@@ -214,12 +279,7 @@ func (e *Engine) List(ctx context.Context) ([]Env, error) {
 				env.LaunchedAt = launched
 			}
 			index, _ := strconv.Atoi(tagValue(inst.Tags, TagNode))
-			env.Nodes = append(env.Nodes, Node{
-				Index:     index,
-				ID:        aws.ToString(inst.InstanceId),
-				PublicIP:  aws.ToString(inst.PublicIpAddress),
-				PrivateIP: aws.ToString(inst.PrivateIpAddress),
-			})
+			env.Nodes = append(env.Nodes, newNode(index, inst))
 		}
 	}
 	envs := make([]Env, 0, len(byName))

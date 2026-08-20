@@ -24,9 +24,14 @@ func init() {
 
 func renderProblems(w io.Writer) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSSH USER\tTYPE\tNOTES")
+	fmt.Fprintln(tw, "NAME\tSSH USER\tTYPE\tBENCH TYPE\tNOTES")
 	for _, p := range catalog.List() {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.Name, p.SSHUser, p.InstanceType, p.Notes)
+		// 推奨値のない問題は "-"。`up --bench` を使うには --bench-instance-type が要ることを示す。
+		bench := "-"
+		if p.BenchInstanceType != "" {
+			bench = p.BenchInstanceType
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.Name, p.SSHUser, p.InstanceType, bench, p.Notes)
 	}
 	tw.Flush()
 }
