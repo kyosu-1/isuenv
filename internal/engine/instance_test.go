@@ -49,6 +49,14 @@ func runningInstance(id, env, node, ip, privIP string) ec2types.Instance {
 	}
 }
 
+// runningInstanceWithRole はロールとインスタンスタイプを明示したrunningインスタンス。
+func runningInstanceWithRole(id, env, node, ip, privIP, instType, role string) ec2types.Instance {
+	inst := runningInstance(id, env, node, ip, privIP)
+	inst.InstanceType = ec2types.InstanceType(instType)
+	inst.Tags = append(inst.Tags, ec2types.Tag{Key: aws.String(TagRole), Value: aws.String(role)})
+	return inst
+}
+
 func TestUp_LaunchesNodesWithTagsAndTTL(t *testing.T) {
 	PollInterval = time.Millisecond
 	var runs []*ec2.RunInstancesInput
@@ -206,8 +214,9 @@ func TestList_GroupsByEnv(t *testing.T) {
 	if !envs[0].ExpiresAt.Equal(wantExpires) {
 		t.Errorf("expires-at tag must be parsed: %v", envs[0].ExpiresAt)
 	}
-	if envs[0].InstanceType != "c5.large" {
-		t.Errorf("instance type must be captured: %v", envs[0].InstanceType)
+	// isuenv:role タグを持たない(この機能より前に起動した)インスタンスも競技ノードとして扱う。
+	if envs[0].InstanceTypeSummary() != "c5.large" {
+		t.Errorf("instance type must be captured: %v", envs[0].InstanceTypeSummary())
 	}
 }
 
@@ -304,5 +313,187 @@ func TestUp_TreatsEventualConsistencyNotFoundAsNotReady(t *testing.T) {
 	}
 	if describeCalls < 2 {
 		t.Fatalf("expected a retry after NotFound, got %d describe calls", describeCalls)
+	}
+}
+
+// --bench 未指定なら従来どおり全ノードが同じタイプの競技ノードになる。
+func TestUp_WithoutBenchLaunchesAppNodesOnly(t *testing.T) {
+	PollInterval = time.Millisecond
+	var runs []*ec2.RunInstancesInput
+	m := &awsapi.Mock{
+		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+			runs = append(runs, in)
+			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String("i-" + strconv.Itoa(len(runs)))}}}, nil
+		},
+		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+			if len(in.InstanceIds) == 0 {
+				return &ec2.DescribeInstancesOutput{}, nil
+			}
+			return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{
+				runningInstanceWithRole("i-1", "isucon13", "1", "54.0.0.1", "10.100.0.11", "c5.large", RoleApp),
+				runningInstanceWithRole("i-2", "isucon13", "2", "54.0.0.2", "10.100.0.12", "c5.large", RoleApp),
+			}}}}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	nodes, err := e.Up(context.Background(), UpOptions{
+		Problem: testProblem(), AMIID: "ami-123", Nodes: 2, InstanceType: "c5.large",
+		TTL: time.Hour, KeyName: "isuenv",
+		Now: time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected exactly 2 RunInstances calls, got %d", len(runs))
+	}
+	for i, run := range runs {
+		if run.InstanceType != ec2types.InstanceType("c5.large") {
+			t.Errorf("run %d: instance type = %q, want c5.large", i, run.InstanceType)
+		}
+		tags := run.TagSpecifications[0].Tags
+		if got := tagValue(tags, TagRole); got != RoleApp {
+			t.Errorf("run %d: role tag = %q, want %q", i, got, RoleApp)
+		}
+		if got := tagValue(tags, TagNode); got != strconv.Itoa(i+1) {
+			t.Errorf("run %d: node tag = %q, want %d", i, got, i+1)
+		}
+	}
+	for _, n := range nodes {
+		if n.Role != RoleApp || n.InstanceType != "c5.large" {
+			t.Errorf("node %d: got role %q type %q, want app/c5.large", n.Index, n.Role, n.InstanceType)
+		}
+	}
+}
+
+// --bench 相当(BenchInstanceType 指定)ならノード数+1台起動し、最後の1台だけタイプとロールが変わる。
+func TestUp_BenchNodeUsesItsOwnTypeAndRole(t *testing.T) {
+	PollInterval = time.Millisecond
+	var runs []*ec2.RunInstancesInput
+	m := &awsapi.Mock{
+		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+			runs = append(runs, in)
+			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String("i-" + strconv.Itoa(len(runs)))}}}, nil
+		},
+		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+			if len(in.InstanceIds) == 0 {
+				return &ec2.DescribeInstancesOutput{}, nil
+			}
+			return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{
+				runningInstanceWithRole("i-1", "isucon13", "1", "54.0.0.1", "10.100.0.11", "c7a.large", RoleApp),
+				runningInstanceWithRole("i-2", "isucon13", "2", "54.0.0.2", "10.100.0.12", "c7a.large", RoleApp),
+				runningInstanceWithRole("i-3", "isucon13", "3", "54.0.0.3", "10.100.0.13", "c7a.xlarge", RoleBench),
+			}}}}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	nodes, err := e.Up(context.Background(), UpOptions{
+		Problem: testProblem(), AMIID: "ami-123", Nodes: 2, InstanceType: "c7a.large",
+		BenchInstanceType: "c7a.xlarge", TTL: time.Hour, KeyName: "isuenv",
+		Now: time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("expected nodes+1 RunInstances calls, got %d", len(runs))
+	}
+	for i, run := range runs[:2] {
+		if run.InstanceType != ec2types.InstanceType("c7a.large") {
+			t.Errorf("app run %d: instance type = %q, want c7a.large", i, run.InstanceType)
+		}
+		if got := tagValue(run.TagSpecifications[0].Tags, TagRole); got != RoleApp {
+			t.Errorf("app run %d: role tag = %q, want %q", i, got, RoleApp)
+		}
+	}
+	benchRun := runs[2]
+	if benchRun.InstanceType != ec2types.InstanceType("c7a.xlarge") {
+		t.Errorf("bench instance type = %q, want c7a.xlarge", benchRun.InstanceType)
+	}
+	benchTags := benchRun.TagSpecifications[0].Tags
+	if got := tagValue(benchTags, TagRole); got != RoleBench {
+		t.Errorf("bench role tag = %q, want %q", got, RoleBench)
+	}
+	// ベンチノードの番号は競技ノードの次。sshのホスト名が <問題名>-<番号> のままであること。
+	if got := tagValue(benchTags, TagNode); got != "3" {
+		t.Errorf("bench node tag = %q, want 3", got)
+	}
+	if got := tagValue(benchTags, "Name"); got != "isucon13-3" {
+		t.Errorf("bench Name tag = %q, want isucon13-3", got)
+	}
+	if len(nodes) != 3 {
+		t.Fatalf("expected 3 nodes, got %+v", nodes)
+	}
+	if nodes[2].Role != RoleBench || nodes[2].InstanceType != "c7a.xlarge" {
+		t.Errorf("last node must be the bench node: %+v", nodes[2])
+	}
+	for _, n := range nodes[:2] {
+		if n.Role != RoleApp || n.InstanceType != "c7a.large" {
+			t.Errorf("node %d must stay an app node: %+v", n.Index, n)
+		}
+	}
+}
+
+func TestBuildLaunches(t *testing.T) {
+	withoutBench := buildLaunches(UpOptions{Nodes: 3, InstanceType: "c5.large"})
+	if len(withoutBench) != 3 {
+		t.Fatalf("expected 3 launches, got %+v", withoutBench)
+	}
+	withBench := buildLaunches(UpOptions{Nodes: 3, InstanceType: "c7a.large", BenchInstanceType: "c7a.2xlarge"})
+	if len(withBench) != 4 {
+		t.Fatalf("expected 4 launches, got %+v", withBench)
+	}
+	want := launch{index: 4, instanceType: "c7a.2xlarge", role: RoleBench}
+	if withBench[3] != want {
+		t.Errorf("bench launch = %+v, want %+v", withBench[3], want)
+	}
+}
+
+func TestEnvInstanceTypeSummary(t *testing.T) {
+	tests := []struct {
+		name  string
+		nodes []Node
+		want  string
+	}{
+		{"single type", []Node{{InstanceType: "c5.large", Role: RoleApp}, {InstanceType: "c5.large", Role: RoleApp}}, "c5.large"},
+		// isuenv:role タグが無い古いインスタンスでも従来どおりタイプだけを表示する。
+		{"legacy without role tag", []Node{{InstanceType: "c5.large"}}, "c5.large"},
+		{"with bench", []Node{
+			{InstanceType: "c7a.large", Role: RoleApp},
+			{InstanceType: "c7a.xlarge", Role: RoleBench},
+		}, "c7a.large +bench c7a.xlarge"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (Env{Nodes: tt.nodes}).InstanceTypeSummary(); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// listはインスタンスのタグとタイプからロールを復元する(CLIはローカルに状態を持たないため)。
+func TestList_CapturesBenchRole(t *testing.T) {
+	m := &awsapi.Mock{
+		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+			return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{
+				runningInstanceWithRole("i-1", "private-isu", "1", "54.0.0.1", "10.100.0.11", "c7a.large", RoleApp),
+				runningInstanceWithRole("i-2", "private-isu", "2", "54.0.0.2", "10.100.0.12", "c7a.xlarge", RoleBench),
+			}}}}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	envs, err := e.List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(envs) != 1 {
+		t.Fatalf("expected 1 env, got %+v", envs)
+	}
+	if got := envs[0].InstanceTypeSummary(); got != "c7a.large +bench c7a.xlarge" {
+		t.Errorf("summary = %q", got)
+	}
+	if envs[0].Nodes[1].Role != RoleBench {
+		t.Errorf("bench role must be restored from the tag: %+v", envs[0].Nodes[1])
 	}
 }

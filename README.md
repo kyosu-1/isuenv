@@ -32,6 +32,7 @@ isuenv problems               # 対応問題一覧
 isuenv up isucon13            # 環境作成（1台, TTL 8h, c5.large）
 isuenv up private-isu         # private-isu（1台, TTL 8h, c7a.large）
 isuenv up isucon13 --nodes 3  # 本番同様の3台構成
+isuenv up private-isu --bench # 競技1台 + ベンチマーカー専用1台（別のインスタンスタイプ）
 isuenv list                   # 稼働中環境と概算コスト・残りTTL
 isuenv ssh isucon13           # 1号機にSSH（isucon13-2 で2号機）
 isuenv down isucon13          # 環境削除
@@ -60,6 +61,8 @@ Ensuring network...
 | `--ttl` | `8h` | この時間が経過したら自動でterminateする（[挙動](#ttlの挙動)） |
 | `--nodes` | `1` | 起動台数。1以上 |
 | `--instance-type` | 問題ごと | EC2インスタンスタイプ。既定値は問題ごとに異なり、`isuenv problems` の TYPE 列で確認できる（ほとんどは `c5.large`、private-isuは推奨に合わせて `c7a.large`） |
+| `--bench` | `false` | ベンチマーカー専用ノードを1台追加する。タイプは `isuenv problems` の BENCH TYPE 列の値。推奨値の無い問題ではエラーになる |
+| `--bench-instance-type` | なし | ベンチマーカー専用ノードのインスタンスタイプを明示する。指定すると `--bench` は省略できる |
 
 同名の環境が既にある場合は起動せずエラーになる。作り直すときは先に `down` する。
 
@@ -76,6 +79,30 @@ isuenv up isucon13 --ttl 2h30m    # 2時間30分
 Error: invalid argument "1d" for "--ttl" flag: time: unknown unit "d" in duration "1d"
 ```
 
+#### ベンチマーカー専用ノード
+
+競技ノードと同じインスタンスタイプでベンチを回すと、アプリを最適化していった先で
+**ベンチマーカー側が先にCPU飽和し、スコアがアプリではなく負荷生成側の性能で頭打ちになる**
+（private-isuを競技1台+ベンチ1台のどちらも `c7a.large` で回したとき、ベンチ機のidleが1〜3%まで落ちても
+アプリ機には37%残っていた）。`--bench` はこれを避けるために、ベンチ用ノードだけ別タイプで追加する。
+
+```sh
+isuenv up private-isu --bench                                     # 競技1台(c7a.large) + ベンチ1台(c7a.xlarge)
+isuenv up private-isu --nodes 3 --bench-instance-type c7a.2xlarge # 競技3台 + ベンチ1台(c7a.2xlarge)
+isuenv up private-isu --nodes 4                                   # 従来どおりベンチノードなし
+```
+
+ベンチノードの番号は競技ノードの次になる（`--nodes 3 --bench` ならベンチは4号機）。
+sshのホスト名は今までどおり `<問題名>-<番号>` なので `isuenv ssh private-isu-4` で入れる。
+ベンチノードがある構成では、`up` の結果にタイプとロールが並ぶ。
+
+```
+$ isuenv up private-isu --bench
+...
+  private-isu-1  public 1.2.3.4  private 10.100.0.1  c7a.large   app
+  private-isu-2  public 5.6.7.8  private 10.100.0.2  c7a.xlarge  bench
+```
+
 ### `isuenv list`
 
 稼働中の環境を一覧する。
@@ -84,9 +111,9 @@ Error: invalid argument "1d" for "--ttl" flag: time: unknown unit "d" in duratio
 | --- | --- |
 | `ENV` | 問題名 |
 | `NODES` | 台数 |
-| `TYPE` | インスタンスタイプ |
+| `TYPE` | インスタンスタイプ。ベンチノードがある場合は `c7a.large +bench c7a.xlarge` のように混在を表す |
 | `UPTIME` | 起動からの経過時間 |
-| `EST COST` | 概算費用。あくまで目安 |
+| `EST COST` | 概算費用。ノードごとの単価で合算する。あくまで目安 |
 | `TTL LEFT` | 自動terminateまでの残り時間 |
 | `PUBLIC IPS` | 各ノードのパブリックIP |
 
@@ -111,7 +138,8 @@ isuenv管理下の**全リソース**を削除する。`yes` の入力を求め�
 
 ### `isuenv problems`
 
-対応している問題と、SSHユーザー、既定のインスタンスタイプ、ベンチ手順へのリンクを一覧する。
+対応している問題と、SSHユーザー、既定のインスタンスタイプ、ベンチマーカー専用ノードの推奨タイプ
+（BENCH TYPE。推奨値の無い問題は `-`）、ベンチ手順へのリンクを一覧する。
 
 ## TTLの挙動
 
@@ -134,9 +162,11 @@ AWS上のリソースはすべて `isuenv:managed=true` タグが付き、`nuke`
 | インターネットゲートウェイ | VPCにアタッチし、メインルートテーブルに `0.0.0.0/0` を向ける |
 | セキュリティグループ | 名前 `isuenv`。**実行時のグローバルIP/32からのtcp 22/80/443** と、**自身のSGからの全プロトコル**（ノード間通信用） |
 | キーペア | 名前 `isuenv` |
-| EC2インスタンス | `--nodes` の台数 |
+| EC2インスタンス | `--nodes` の台数（`--bench` 指定時はベンチ用に+1台） |
 
-インスタンスには `isuenv:env`（問題名）、`isuenv:node`（何号機か）、`isuenv:expires-at`（TTLの絶対期限）のタグが付く。CLIはローカルに状態を持たず、すべてこれらのタグから復元する。
+インスタンスには `isuenv:env`（問題名）、`isuenv:node`（何号機か）、`isuenv:role`（`app` = 競技ノード /
+`bench` = ベンチマーカー専用ノード）、`isuenv:expires-at`（TTLの絶対期限）のタグが付く。
+CLIはローカルに状態を持たず、すべてこれらのタグから復元する。
 
 ローカルには次のファイルが作られる。
 
@@ -151,8 +181,8 @@ VPC・サブネット・IGW・SG・キーペアは**無料**なので、`down` �
 ## コストの目安
 
 ap-northeast-1のオンデマンド概算で、c5.large（多くの問題の既定）が約$0.107/時、
-c7a.large（private-isuの既定）が約$0.129/時。
-`isuenv list` の EST COST は概算であり、実際の課金はAWSの請求を確認すること。
+c7a.large（private-isuの既定）が約$0.129/時、c7a.xlarge（private-isuのベンチ用）が約$0.258/時。
+`isuenv list` の EST COST はノードごとの単価を合算した概算であり、実際の課金はAWSの請求を確認すること。
 
 ## 手動E2E検証手順
 
@@ -187,6 +217,9 @@ private-isuは提供元AMIがmatsuu/aws-isuconと別物なので、TTL（user-da
      -u /home/isucon/private_isu/benchmarker/userdata -t http://localhost
    ```
 6. 15分後に実際にterminateされること（`./isuenv list` が空になる）
+7. ベンチ専用ノード構成: `./isuenv up private-isu --bench --ttl 1h` → `./isuenv list` の TYPE が
+   `c7a.large +bench c7a.xlarge`、EST COST が2台の単価の合算になること →
+   `./isuenv ssh private-isu-2` でベンチ機（`c7a.xlarge`）に入れること → `./isuenv down private-isu`
 
 ## リリース手順
 

@@ -33,8 +33,9 @@ var listCmd = &cobra.Command{
 		fmt.Fprintln(tw, "ENV\tNODES\tTYPE\tUPTIME\tEST COST\tTTL LEFT\tPUBLIC IPS")
 		for _, env := range envs {
 			cost := "-"
-			if h, ok := engine.HourlyUSD(env.InstanceType); ok {
-				cost = fmt.Sprintf("$%.2f", engine.Estimate(env.LaunchedAt, now, h, len(env.Nodes)))
+			// ベンチノードだけタイプが違う構成があるので、ノードごとの単価で合算する。
+			if est, ok := engine.EstimateNodes(env.LaunchedAt, now, env.Nodes); ok {
+				cost = fmt.Sprintf("$%.2f", est)
 			}
 			ttlLeft := "-"
 			if !env.ExpiresAt.IsZero() {
@@ -49,7 +50,7 @@ var listCmd = &cobra.Command{
 				ips = append(ips, n.PublicIP)
 			}
 			fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
-				env.Name, len(env.Nodes), env.InstanceType,
+				env.Name, len(env.Nodes), env.InstanceTypeSummary(),
 				now.Sub(env.LaunchedAt).Round(time.Minute), cost, ttlLeft, strings.Join(ips, ", "))
 		}
 		return tw.Flush()

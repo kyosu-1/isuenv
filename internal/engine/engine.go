@@ -13,6 +13,16 @@ const (
 	TagEnv     = "isuenv:env"
 	TagNode    = "isuenv:node"
 	TagExpires = "isuenv:expires-at"
+	// TagRole は競技用ノードとベンチマーカー用ノードを区別する。
+	// 両者はインスタンスタイプが異なりうるので、タグに残しておかないと
+	// ローカルに状態を持たないCLIからは後で見分けられない。
+	TagRole = "isuenv:role"
+)
+
+// isuenv:role タグの値。
+const (
+	RoleApp   = "app"
+	RoleBench = "bench"
 )
 
 type Engine struct {
