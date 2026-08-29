@@ -35,6 +35,7 @@ isuenv up isucon13 --nodes 3  # 本番同様の3台構成
 isuenv up private-isu --bench # 競技1台 + ベンチマーカー専用1台（別のインスタンスタイプ）
 isuenv list                   # 稼働中環境と概算コスト・残りTTL
 isuenv ssh isucon13           # 1号機にSSH（isucon13-2 で2号機）
+isuenv bench isucon14         # ベンチ実行コマンドを表示（IPを埋めた状態で）
 isuenv down isucon13          # 環境削除
 isuenv nuke                   # isuenv管理の全リソース削除（VPC・キーペア含む）
 isuenv version                # バージョン表示
@@ -128,6 +129,34 @@ $ isuenv up private-isu --bench
 
 生成されたssh configは `~/.ssh/config` からIncludeされるので、素の `ssh isucon13-1` やVS Code Remoteからも使える。
 
+### `isuenv bench <問題名>`
+
+稼働中の環境に対してベンチマーカーを実行するコマンドを**表示する**。実行はしない。
+
+```
+$ isuenv bench isucon14
+ssh isucon14-4 'cd /home/isucon && sudo -u isucon ./bench run --addr 10.100.0.5:443 --target https://isuride.xiv.isucon.net --payment-url http://10.100.0.9:12346 --payment-bind-port 12346'
+```
+
+ベンチマーカーはAMIに同梱されているが、**起動方法が問題ごとに全く違い、しかも引数に埋めるprivate IPが構成によって変わる**。
+そこを毎回上流のREADMEを見ながら手で埋めるのが練習環境での一番の手間なので、そこだけを引き受ける。
+
+- ベンチマーカー専用ノード（`--bench`）があればそのノードで打つコマンドを出す。無ければ1号機
+- ベンチ対象は1号機。`{{.TargetIP}}` にそのprivate IPが入る
+- `{{.BenchIP}}` にはベンチを打つノード自身のprivate IPが入る（isucon14のpaymentサーバのように、ベンチ側がbindするアドレスを引数で渡す問題で使う）
+
+**実行しないのは意図的**。ISUCONではベンチの前後（デプロイ、ログ退避、集計）を自前のMakefileやスクリプトで回すのが定番で、
+実行まで奪うとそこに組み込みづらくなる。出力するだけなら好きに合成できる。
+
+```sh
+$(isuenv bench isucon14)                    # そのまま実行
+isuenv bench isucon14 >> Makefile           # Makefileに取り込む
+```
+
+対応している問題は `isuenv problems` の BENCH CMD 列が `yes` のものだけ。
+起動方法は実機で確認しないと確定できないため、検証できた問題から順に埋めている（現在は isucon14 と private-isu）。
+未対応の問題では、NOTESのリンク先を見るよう促すエラーになる。
+
 ### `isuenv down <問題名>`
 
 その環境のインスタンスをterminateする。VPC・サブネット・SG・キーペアは残るので、次の `up` で再利用される。対象が無い場合も成功扱い。
@@ -139,7 +168,7 @@ isuenv管理下の**全リソース**を削除する。`yes` の入力を求め�
 ### `isuenv problems`
 
 対応している問題と、SSHユーザー、既定のインスタンスタイプ、ベンチマーカー専用ノードの推奨タイプ
-（BENCH TYPE。推奨値の無い問題は `-`）、ベンチ手順へのリンクを一覧する。
+（BENCH TYPE。推奨値の無い問題は `-`）、`isuenv bench` が使えるか（BENCH CMD）、ベンチ手順へのリンクを一覧する。
 
 ## TTLの挙動
 
@@ -198,6 +227,23 @@ c7a.large（private-isuの既定）が約$0.129/時、c7a.xlarge（private-isu�
 8. （まれに）`./isuenv nuke` でVPCまで消えることをAWSコンソールで確認
 9. 複数台構成の疎通確認: `./isuenv up isucon13 --nodes 2` → `./isuenv ssh isucon13`（1号機）でログイン → `nc -zv <2号機のprivate ip> 22` が成功すること（SGの自己参照ルールでノード間通信が通ることの確認）→ `./isuenv down isucon13`
 
+### `isuenv bench`
+
+**カタログのベンチ起動方法は実機でしか検証できない。** 問題を足したときは必ず以下を実施する。
+
+1. `./isuenv up isucon14 --nodes 3 --bench-instance-type c5.xlarge --ttl 1h`
+2. `./isuenv bench isucon14` — ベンチノード（4号機）を指し、`--addr` が1号機のprivate IP、`--payment-url` が4号機のprivate IPになっていること
+3. **出力されたコマンドをそのまま実行し、ベンチが完走してスコアが出ること。** ここが本番
+4. `./isuenv bench isucon13` — 未対応の問題として、NOTESを見るよう促すエラーになること
+5. `./isuenv down isucon14`
+
+ベンチノードなしの構成も確認する。
+
+1. `./isuenv up private-isu --ttl 1h`（1台完結）
+2. `./isuenv bench private-isu` — 1号機を指し、`-t http://<1号機のprivate IP>` になっていること
+3. 出力されたコマンドを実行し、完走すること
+4. `./isuenv up private-isu --bench` の構成では2号機を指し、`-t` が1号機を向くこと
+
 ### private-isu
 
 private-isuは提供元AMIがmatsuu/aws-isuconと別物なので、TTL（user-data）が効くかを個別に確認する。
@@ -239,7 +285,7 @@ git push origin v0.1.0
 
 ## 注意
 
-- ベンチマーカーはAMIに同梱されている。実行方法は問題ごとに異なるので `isuenv problems` のNOTESのリンク先を参照
+- ベンチマーカーはAMIに同梱されている。実行方法は問題ごとに異なるので、`isuenv bench <問題名>` でコマンドを出すか、`isuenv problems` のNOTESのリンク先を参照
 - 消し忘れてもTTLで自己消滅するが、`isuenv list` での確認を習慣にすること
 
 ## ライセンス
