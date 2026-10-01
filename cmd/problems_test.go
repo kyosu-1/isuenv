@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/kyosu-1/isuenv/internal/catalog"
+	"github.com/kyosu-1/isuenv/internal/engine"
 )
 
 func TestRenderProblems(t *testing.T) {
@@ -55,5 +58,20 @@ func TestRenderProblemsBenchCmdColumn(t *testing.T) {
 	}
 	if got := benchCmd["isucon13"]; got != "-" {
 		t.Errorf("isucon13 has no bench command yet, want a dash: got %q", got)
+	}
+}
+
+// カタログが既定で起動するタイプは全て単価表に載っていること。載っていないタイプが
+// 1台でも混じると `isuenv list` の EST COST が "-" になり、課金の目安が見えなくなる。
+func TestCatalogInstanceTypesHavePrices(t *testing.T) {
+	for _, p := range catalog.List() {
+		for _, typ := range []string{p.InstanceType, p.BenchInstanceType} {
+			if typ == "" {
+				continue
+			}
+			if _, ok := engine.HourlyUSD(typ); !ok {
+				t.Errorf("problem %s uses %s, which has no price in engine/cost.go", p.Name, typ)
+			}
+		}
 	}
 }

@@ -56,8 +56,8 @@ func TestEstimateNodes_UnknownTypeIsNotEstimated(t *testing.T) {
 }
 
 func TestHourlyUSD_BenchInstanceTypes(t *testing.T) {
-	// private-isu の推奨ベンチタイプと、--bench-instance-type で指定しがちな1段上のタイプ。
-	for _, typ := range []string{"c7a.xlarge", "c7a.2xlarge"} {
+	// カタログの推奨ベンチタイプと、--bench-instance-type で指定しがちな1段上のタイプ。
+	for _, typ := range []string{"c7a.xlarge", "c7a.2xlarge", "c5.xlarge", "c5.2xlarge", "c4.xlarge", "r5.large"} {
 		if h, ok := HourlyUSD(typ); !ok || h <= 0 {
 			t.Errorf("%s must have a price: %v %v", typ, h, ok)
 		}
