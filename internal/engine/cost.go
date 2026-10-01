@@ -3,8 +3,11 @@ package engine
 import "time"
 
 // ap-northeast-1のオンデマンド時間単価(USD)の概算値。2026-07時点の参考値であり課金額の保証はしない。
-// c7a系は2026-08にPricing APIから取得した値。
+// c7a系は2026-08、c4.xlarge と r5.large は2026-10にPricing APIから取得した値。
+// catalog.yaml の instance_type / bench_instance_type に出てくるタイプは全て載せること
+// (載っていないと `isuenv list` の EST COST が "-" になる)。
 var hourlyUSD = map[string]float64{
+	"c4.xlarge":   0.252,
 	"c5.large":    0.107,
 	"c5.xlarge":   0.214,
 	"c5.2xlarge":  0.428,
@@ -12,6 +15,7 @@ var hourlyUSD = map[string]float64{
 	"c7a.large":   0.1292,
 	"c7a.xlarge":  0.2584,
 	"c7a.2xlarge": 0.5168,
+	"r5.large":    0.152,
 	"t3.medium":   0.0544,
 	"t3.large":    0.1088,
 }

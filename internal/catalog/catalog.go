@@ -25,8 +25,10 @@ type Problem struct {
 	// List()/Lookup() の戻り値では常に非空。
 	InstanceType string `yaml:"instance_type"`
 	// BenchInstanceType はベンチマーカー専用ノードの推奨インスタンスタイプ。
-	// 上流が明確な推奨値を出している問題にだけ設定する。空の問題で `up --bench` を使うには
-	// --bench-instance-type での明示指定が要る(勝手な推奨値を作らないため、既定値では埋めない)。
+	// 上流が推奨タイプを明記していればそれを、本番のベンチのスペックだけが公開されていれば
+	// そのvCPUとメモリを満たす最小のタイプを設定する(根拠は catalog.yaml の各問題のコメント)。
+	// どちらも無い問題は空のままで、`up --bench` を使うには --bench-instance-type での
+	// 明示指定が要る(勝手な推奨値を作らないため、既定値では埋めない)。
 	BenchInstanceType string `yaml:"bench_instance_type"`
 	// Bench はベンチマーカーの起動方法。nil の問題は `isuenv bench` に未対応で、
 	// NOTES のリンク先を読んで手で打つことになる。

@@ -76,15 +76,31 @@ func TestLookupPrivateISU(t *testing.T) {
 	}
 }
 
-// ベンチ用タイプは推奨値の根拠がある問題にだけ設定する。無根拠な既定値を配らないため、
-// private-isu 以外は空のままであることを確かめる。
+// ベンチ用タイプは推奨値の根拠がある問題にだけ設定する。根拠は上流が明記した推奨タイプか、
+// 本番のベンチのスペック(それを満たす最小のタイプに読み替える)。無根拠な既定値を配らないため、
+// スペックが公開されていない isucon9-final は空のままであることを確かめる。
 func TestBenchInstanceTypeOnlyWhereRecommended(t *testing.T) {
+	want := map[string]string{
+		"isucon9-qualify":  "c7a.xlarge",
+		"isucon9-final":    "",
+		"isucon10-qualify": "r5.large",
+		"isucon10-final":   "c5.2xlarge",
+		"isucon11-qualify": "c4.xlarge",
+		"isucon11-final":   "c5.xlarge",
+		"isucon12-qualify": "c5.xlarge",
+		"isucon12-final":   "c5.xlarge",
+		"isucon13":         "c5.2xlarge",
+		"isucon14":         "c5.2xlarge",
+		"private-isu":      "c7a.xlarge",
+	}
 	for _, p := range List() {
-		if p.Name == "private-isu" {
+		w, ok := want[p.Name]
+		if !ok {
+			t.Errorf("problem %s is missing from this test; decide its bench instance type explicitly", p.Name)
 			continue
 		}
-		if p.BenchInstanceType != "" {
-			t.Errorf("problem %s should not have a bench instance type: %q", p.Name, p.BenchInstanceType)
+		if p.BenchInstanceType != w {
+			t.Errorf("problem %s bench instance type = %q, want %q", p.Name, p.BenchInstanceType, w)
 		}
 	}
 }
