@@ -44,11 +44,11 @@ var benchCmd = &cobra.Command{
 		if env.Name == "" {
 			return fmt.Errorf("environment %q is not running; run `isuenv up %s` first", name, name)
 		}
-		index, vars, err := benchTarget(env)
+		host, vars, err := benchTarget(env)
 		if err != nil {
 			return err
 		}
-		line, err := benchCommandLine(name, index, bench, vars)
+		line, err := benchCommandLine(host, bench, vars)
 		if err != nil {
 			return err
 		}
@@ -75,7 +75,8 @@ func benchOrError(name string) (catalog.Bench, error) {
 // benchTarget はベンチを打つノードと、引数に埋める変数を決める。
 // ベンチ専用ノードがあればそこで打つ(競技ノードで回すと負荷生成がアプリのCPUを
 // 食ってスコアが正しく測れない)。無ければ1号機で、対象も自分自身になる。
-func benchTarget(env engine.Env) (int, catalog.BenchVars, error) {
+// 返すのはそのノードのsshホスト名。
+func benchTarget(env engine.Env) (string, catalog.BenchVars, error) {
 	var appIPs []string
 	var benchNode *engine.Node
 	var firstApp *engine.Node
@@ -92,13 +93,13 @@ func benchTarget(env engine.Env) (int, catalog.BenchVars, error) {
 		}
 	}
 	if firstApp == nil {
-		return 0, catalog.BenchVars{}, fmt.Errorf("environment %q has no application node to benchmark", env.Name)
+		return "", catalog.BenchVars{}, fmt.Errorf("environment %q has no application node to benchmark", env.Name)
 	}
 	runner := benchNode
 	if runner == nil {
 		runner = firstApp
 	}
-	return runner.Index, catalog.BenchVars{
+	return engine.NodeName(env.Name, runner.Index, runner.Role), catalog.BenchVars{
 		TargetIP: firstApp.PrivateIP,
 		BenchIP:  runner.PrivateIP,
 		AllIPs:   strings.Join(appIPs, ","),
@@ -106,7 +107,7 @@ func benchTarget(env engine.Env) (int, catalog.BenchVars, error) {
 }
 
 // benchCommandLine は貼ればそのまま動く ssh 一行を組み立てる。
-func benchCommandLine(envName string, nodeIndex int, b catalog.Bench, vars catalog.BenchVars) (string, error) {
+func benchCommandLine(host string, b catalog.Bench, vars catalog.BenchVars) (string, error) {
 	args, err := b.RenderArgs(vars)
 	if err != nil {
 		return "", err
@@ -121,7 +122,7 @@ func benchCommandLine(envName string, nodeIndex int, b catalog.Bench, vars catal
 	parts = append(parts, b.Command)
 	parts = append(parts, args...)
 	remote := strings.Join(parts, " ")
-	return fmt.Sprintf("ssh %s-%d %s", envName, nodeIndex, shellQuote(remote)), nil
+	return fmt.Sprintf("ssh %s %s", host, shellQuote(remote)), nil
 }
 
 // shellQuote はシングルクォートで包む。出力はそのまま貼られる前提なので、

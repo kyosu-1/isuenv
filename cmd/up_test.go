@@ -93,7 +93,7 @@ func TestFormatNodeLines(t *testing.T) {
 	if !strings.Contains(lines[1], "c7a.xlarge") || !strings.HasSuffix(lines[1], "bench") {
 		t.Errorf("bench node line should show its type and role: %q", lines[1])
 	}
-	if !strings.HasPrefix(lines[1], "  private-isu-2 ") {
+	if !strings.HasPrefix(lines[1], "  private-isu-bench ") {
 		t.Errorf("first column must stay the ssh host name: %q", lines[1])
 	}
 }

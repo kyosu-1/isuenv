@@ -93,15 +93,15 @@ isuenv up private-isu --nodes 3 --bench-instance-type c7a.2xlarge # 競技3台 +
 isuenv up private-isu --nodes 4                                   # 従来どおりベンチノードなし
 ```
 
-ベンチノードの番号は競技ノードの次になる（`--nodes 3 --bench` ならベンチは4号機）。
-sshのホスト名は今までどおり `<問題名>-<番号>` なので `isuenv ssh private-isu-4` で入れる。
+ベンチノードの名前は番号ではなく `<問題名>-bench` になる（EC2のNameタグもsshのホスト名も同じ）。
+`isuenv ssh private-isu-bench` で入れる。番号付きの名前（`private-isu-1` など）は競技ノードだけを指す。
 ベンチノードがある構成では、`up` の結果にタイプとロールが並ぶ。
 
 ```
 $ isuenv up private-isu --bench
 ...
-  private-isu-1  public 1.2.3.4  private 10.100.0.1  c7a.large   app
-  private-isu-2  public 5.6.7.8  private 10.100.0.2  c7a.xlarge  bench
+  private-isu-1      public 1.2.3.4  private 10.100.0.1  c7a.large   app
+  private-isu-bench  public 5.6.7.8  private 10.100.0.2  c7a.xlarge  bench
 ```
 
 ### `isuenv list`
@@ -118,9 +118,10 @@ $ isuenv up private-isu --bench
 | `TTL LEFT` | 自動terminateまでの残り時間 |
 | `PUBLIC IPS` | 各ノードのパブリックIP |
 
-### `isuenv ssh <問題名>[-N]`
+### `isuenv ssh <問題名>[-N|-bench]`
 
 ノードにSSHする。番号を省略すると1号機に繋ぐ（`isucon13` = `isucon13-1`）。
+ベンチマーカー専用ノードには `isucon13-bench` で繋ぐ。
 
 実行のたびに次の2つを行うので、**グローバルIPが変わったら打ち直せば復旧する**。
 
@@ -135,7 +136,7 @@ $ isuenv up private-isu --bench
 
 ```
 $ isuenv bench isucon14
-ssh isucon14-4 'cd /home/isucon && sudo -u isucon ./bench run --addr 10.100.0.5:443 --target https://isuride.xiv.isucon.net --payment-url http://10.100.0.9:12346 --payment-bind-port 12346'
+ssh isucon14-bench 'cd /home/isucon && sudo -u isucon ./bench run --addr 10.100.0.5:443 --target https://isuride.xiv.isucon.net --payment-url http://10.100.0.9:12346 --payment-bind-port 12346'
 ```
 
 ベンチマーカーはAMIに同梱されているが、**起動方法が問題ごとに全く違い、しかも引数に埋めるprivate IPが構成によって変わる**。
@@ -232,7 +233,7 @@ c7a.large（private-isuの既定）が約$0.129/時、c7a.xlarge（private-isu�
 **カタログのベンチ起動方法は実機でしか検証できない。** 問題を足したときは必ず以下を実施する。
 
 1. `./isuenv up isucon14 --nodes 3 --bench-instance-type c5.xlarge --ttl 1h`
-2. `./isuenv bench isucon14` — ベンチノード（4号機）を指し、`--addr` が1号機のprivate IP、`--payment-url` が4号機のprivate IPになっていること
+2. `./isuenv bench isucon14` — ベンチノード（`isucon14-bench`）を指し、`--addr` が1号機のprivate IP、`--payment-url` がベンチノードのprivate IPになっていること
 3. **出力されたコマンドをそのまま実行し、ベンチが完走してスコアが出ること。** ここが本番
 4. `./isuenv bench isucon13` — 未対応の問題として、NOTESを見るよう促すエラーになること
 5. `./isuenv down isucon14`
@@ -242,7 +243,7 @@ c7a.large（private-isuの既定）が約$0.129/時、c7a.xlarge（private-isu�
 1. `./isuenv up private-isu --ttl 1h`（1台完結）
 2. `./isuenv bench private-isu` — 1号機を指し、`-t http://<1号機のprivate IP>` になっていること
 3. 出力されたコマンドを実行し、完走すること
-4. `./isuenv up private-isu --bench` の構成では2号機を指し、`-t` が1号機を向くこと
+4. `./isuenv up private-isu --bench` の構成では `private-isu-bench` を指し、`-t` が1号機を向くこと
 
 ### private-isu
 
@@ -265,7 +266,7 @@ private-isuは提供元AMIがmatsuu/aws-isuconと別物なので、TTL（user-da
 6. 15分後に実際にterminateされること（`./isuenv list` が空になる）
 7. ベンチ専用ノード構成: `./isuenv up private-isu --bench --ttl 1h` → `./isuenv list` の TYPE が
    `c7a.large +bench c7a.xlarge`、EST COST が2台の単価の合算になること →
-   `./isuenv ssh private-isu-2` でベンチ機（`c7a.xlarge`）に入れること → `./isuenv down private-isu`
+   `./isuenv ssh private-isu-bench` でベンチ機（`c7a.xlarge`）に入れること → `./isuenv down private-isu`
 
 ## リリース手順
 

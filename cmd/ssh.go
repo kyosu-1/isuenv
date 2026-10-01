@@ -11,10 +11,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var nodeSuffix = regexp.MustCompile(`-\d+$`)
+// ノード指定の末尾。競技ノードは -<番号>、ベンチノードは -bench。
+var nodeSuffix = regexp.MustCompile(`-(\d+|bench)$`)
 
 var sshCmd = &cobra.Command{
-	Use:   "ssh <problem>[-N]",
+	Use:   "ssh <problem>[-N|-bench]",
 	Short: "SSH into a practice environment node (node 1 by default)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
