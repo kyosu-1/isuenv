@@ -50,9 +50,6 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/kyosu-1/isuenv
     description: CLI to create and destroy ISUCON practice environments on AWS EC2
-    url:
-      # homepageとダウンロード元ドメインが一致していることを明示し brew audit を通す
-      verified: github.com/kyosu-1/isuenv/
     # バイナリは署名・notarizeしていないため、そのままだとGatekeeperの隔離属性で
     # 「壊れている」と言われて起動できない。インストール後に属性を落とす。
     hooks:
