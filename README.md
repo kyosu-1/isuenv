@@ -62,7 +62,7 @@ Ensuring network...
 | `--ttl` | `8h` | この時間が経過したら自動でterminateする（[挙動](#ttlの挙動)） |
 | `--nodes` | `1` | 起動台数。1以上 |
 | `--instance-type` | 問題ごと | EC2インスタンスタイプ。既定値は問題ごとに異なり、`isuenv problems` の TYPE 列で確認できる（ほとんどは `c5.large`、private-isuは推奨に合わせて `c7a.large`） |
-| `--bench` | `false` | ベンチマーカー専用ノードを1台追加する。タイプは `isuenv problems` の BENCH TYPE 列の値。推奨値の無い問題ではエラーになる |
+| `--bench` | `false` | ベンチマーカー専用ノードを1台追加する。タイプは `isuenv problems` の BENCH TYPE 列の値（上流の推奨タイプ、または本番のベンチのスペックを満たす最小のタイプ）。推奨値の無い問題（isucon9-final）ではエラーになる |
 | `--bench-instance-type` | なし | ベンチマーカー専用ノードのインスタンスタイプを明示する。指定すると `--bench` は省略できる |
 
 同名の環境が既にある場合は起動せずエラーになる。作り直すときは先に `down` する。

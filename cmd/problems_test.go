@@ -32,8 +32,8 @@ func TestRenderProblemsBenchTypeColumn(t *testing.T) {
 	if got := benchTypes["private-isu"]; got != "c7a.xlarge" {
 		t.Errorf("private-isu bench type = %q, want c7a.xlarge", got)
 	}
-	if got := benchTypes["isucon13"]; got != "-" {
-		t.Errorf("isucon13 has no recommended bench type, want a dash: got %q", got)
+	if got := benchTypes["isucon9-final"]; got != "-" {
+		t.Errorf("isucon9-final has no recommended bench type, want a dash: got %q", got)
 	}
 }
 
