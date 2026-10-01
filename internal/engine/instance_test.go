@@ -414,12 +414,12 @@ func TestUp_BenchNodeUsesItsOwnTypeAndRole(t *testing.T) {
 	if got := tagValue(benchTags, TagRole); got != RoleBench {
 		t.Errorf("bench role tag = %q, want %q", got, RoleBench)
 	}
-	// ベンチノードの番号は競技ノードの次。sshのホスト名が <問題名>-<番号> のままであること。
+	// ベンチノードの番号は競技ノードの次。名前は番号ではなく <問題名>-bench になる。
 	if got := tagValue(benchTags, TagNode); got != "3" {
 		t.Errorf("bench node tag = %q, want 3", got)
 	}
-	if got := tagValue(benchTags, "Name"); got != "isucon13-3" {
-		t.Errorf("bench Name tag = %q, want isucon13-3", got)
+	if got := tagValue(benchTags, "Name"); got != "isucon13-bench" {
+		t.Errorf("bench Name tag = %q, want isucon13-bench", got)
 	}
 	if len(nodes) != 3 {
 		t.Fatalf("expected 3 nodes, got %+v", nodes)
@@ -495,5 +495,18 @@ func TestList_CapturesBenchRole(t *testing.T) {
 	}
 	if envs[0].Nodes[1].Role != RoleBench {
 		t.Errorf("bench role must be restored from the tag: %+v", envs[0].Nodes[1])
+	}
+}
+
+func TestNodeName(t *testing.T) {
+	if got := NodeName("isucon13", 2, RoleApp); got != "isucon13-2" {
+		t.Errorf("app node name = %q, want isucon13-2", got)
+	}
+	// isuenv:role タグを持たない古いインスタンスは競技ノードとして扱う。
+	if got := NodeName("isucon13", 1, ""); got != "isucon13-1" {
+		t.Errorf("node without a role = %q, want isucon13-1", got)
+	}
+	if got := NodeName("isucon13", 4, RoleBench); got != "isucon13-bench" {
+		t.Errorf("bench node name = %q, want isucon13-bench", got)
 	}
 }

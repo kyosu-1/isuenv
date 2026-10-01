@@ -125,3 +125,44 @@ func TestRunDownRefreshesSSHConfigWhenNothingToTerminate(t *testing.T) {
 		t.Errorf("古いエントリが残っている:\n%s", got)
 	}
 }
+
+// ベンチノードのホスト名は番号ではなく <問題名>-bench。番号付きの名前は競技ノードだけを指す。
+func TestRefreshSSHConfigNamesBenchNode(t *testing.T) {
+	readConfig := fakeHome(t)
+	bench := instance("i-4", "isucon13", 4, "203.0.113.4")
+	bench.Tags = append(bench.Tags, ec2types.Tag{Key: aws.String(engine.TagRole), Value: aws.String(engine.RoleBench)})
+	e := &engine.Engine{EC2: &awsapi.Mock{
+		DescribeInstancesFunc: describing(instance("i-1", "isucon13", 1, "203.0.113.1"), bench),
+	}}
+
+	if err := refreshSSHConfig(context.Background(), e); err != nil {
+		t.Fatal(err)
+	}
+
+	got := readConfig()
+	if !strings.Contains(got, "Host isucon13-1\n") {
+		t.Errorf("競技ノードは番号付きの名前のまま:\n%s", got)
+	}
+	if !strings.Contains(got, "Host isucon13-bench\n  HostName 203.0.113.4\n") {
+		t.Errorf("ベンチノードは isucon13-bench で引ける必要がある:\n%s", got)
+	}
+	if strings.Contains(got, "isucon13-4") {
+		t.Errorf("ベンチノードに番号付きの名前を残さない:\n%s", got)
+	}
+}
+
+// `isuenv ssh` は番号も -bench も付いていない名前だけ1号機に読み替える。
+func TestNodeSuffix(t *testing.T) {
+	for alias, want := range map[string]bool{
+		"isucon13":          false,
+		"isucon13-2":        true,
+		"isucon13-bench":    true,
+		"isucon12-qualify":  false,
+		"private-isu":       false,
+		"private-isu-bench": true,
+	} {
+		if got := nodeSuffix.MatchString(alias); got != want {
+			t.Errorf("nodeSuffix.MatchString(%q) = %v, want %v", alias, got, want)
+		}
+	}
+}

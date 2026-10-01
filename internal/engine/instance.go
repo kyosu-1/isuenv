@@ -55,7 +55,8 @@ type launch struct {
 }
 
 // buildLaunches は起動するインスタンスの一覧を組み立てる。
-// ベンチノードの番号を競技ノードの次にするのは、sshのホスト名を <問題名>-<番号> のまま保つため。
+// ベンチノードの番号(isuenv:node タグ)は競技ノードの次にする。名前は <問題名>-bench で
+// 番号を含まないが、一覧での並び順を決めるために番号自体は持たせる。
 func buildLaunches(opts UpOptions) []launch {
 	launches := make([]launch, 0, opts.Nodes+1)
 	for i := 1; i <= opts.Nodes; i++ {
@@ -114,7 +115,7 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 					{Key: aws.String(TagNode), Value: aws.String(strconv.Itoa(l.index))},
 					{Key: aws.String(TagExpires), Value: aws.String(expires)},
 					{Key: aws.String(TagRole), Value: aws.String(l.role)},
-					{Key: aws.String("Name"), Value: aws.String(fmt.Sprintf("%s-%d", name, l.index))},
+					{Key: aws.String("Name"), Value: aws.String(NodeName(name, l.index, l.role))},
 				},
 			}},
 		})

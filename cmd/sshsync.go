@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 
 	"github.com/kyosu-1/isuenv/internal/catalog"
@@ -34,7 +33,7 @@ func refreshSSHConfig(ctx context.Context, e *engine.Engine, excludeIDs ...strin
 				continue
 			}
 			hosts = append(hosts, sshconf.Host{
-				Alias:        fmt.Sprintf("%s-%d", env.Name, n.Index),
+				Alias:        engine.NodeName(env.Name, n.Index, n.Role),
 				HostName:     n.PublicIP,
 				User:         user,
 				IdentityFile: pemPath(),

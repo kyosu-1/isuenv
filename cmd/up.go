@@ -152,7 +152,7 @@ func formatNodeLines(name string, nodes []engine.Node) []string {
 		if role == "" {
 			role = engine.RoleApp
 		}
-		fmt.Fprintf(tw, "  %s-%d\tpublic %s\tprivate %s\t%s\t%s\n", name, n.Index, n.PublicIP, n.PrivateIP, n.InstanceType, role)
+		fmt.Fprintf(tw, "  %s\tpublic %s\tprivate %s\t%s\t%s\n", engine.NodeName(name, n.Index, n.Role), n.PublicIP, n.PrivateIP, n.InstanceType, role)
 	}
 	tw.Flush()
 	return strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")

@@ -17,12 +17,12 @@ func TestBenchTargetPrefersBenchNode(t *testing.T) {
 		{Index: 3, PrivateIP: "10.100.0.7", Role: engine.RoleApp},
 		{Index: 4, PrivateIP: "10.100.0.9", Role: engine.RoleBench},
 	}}
-	idx, vars, err := benchTarget(env)
+	host, vars, err := benchTarget(env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if idx != 4 {
-		t.Errorf("node index = %d, want 4 (the bench node)", idx)
+	if host != "isucon14-bench" {
+		t.Errorf("host = %q, want isucon14-bench (the bench node)", host)
 	}
 	if vars.BenchIP != "10.100.0.9" {
 		t.Errorf("BenchIP = %q, want the bench node's own IP", vars.BenchIP)
@@ -43,12 +43,12 @@ func TestBenchTargetFallsBackToFirstNode(t *testing.T) {
 	env := engine.Env{Name: "private-isu", Nodes: []engine.Node{
 		{Index: 1, PrivateIP: "10.100.0.1", Role: engine.RoleApp},
 	}}
-	idx, vars, err := benchTarget(env)
+	host, vars, err := benchTarget(env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if idx != 1 {
-		t.Errorf("node index = %d, want 1", idx)
+	if host != "private-isu-1" {
+		t.Errorf("host = %q, want private-isu-1", host)
 	}
 	if vars.TargetIP != "10.100.0.1" || vars.BenchIP != "10.100.0.1" {
 		t.Errorf("vars = %+v", vars)
@@ -83,11 +83,11 @@ func TestBenchCommandLine(t *testing.T) {
 		Command: "./bench",
 		Args:    []string{"run", "--addr", "{{.TargetIP}}:443"},
 	}
-	got, err := benchCommandLine("isucon14", 4, b, catalog.BenchVars{TargetIP: "10.100.0.5"})
+	got, err := benchCommandLine("isucon14-bench", b, catalog.BenchVars{TargetIP: "10.100.0.5"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "ssh isucon14-4 'cd /home/isucon && sudo -u isucon ./bench run --addr 10.100.0.5:443'"
+	want := "ssh isucon14-bench 'cd /home/isucon && sudo -u isucon ./bench run --addr 10.100.0.5:443'"
 	if got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
@@ -96,7 +96,7 @@ func TestBenchCommandLine(t *testing.T) {
 // workdir と user が空なら cd と sudo を出さない。
 func TestBenchCommandLineMinimal(t *testing.T) {
 	b := catalog.Bench{Command: "/usr/local/bin/bench", Args: []string{"-t", "http://{{.TargetIP}}"}}
-	got, err := benchCommandLine("x", 1, b, catalog.BenchVars{TargetIP: "10.0.0.1"})
+	got, err := benchCommandLine("x-1", b, catalog.BenchVars{TargetIP: "10.0.0.1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestBenchCommandLineMinimal(t *testing.T) {
 // シェルとして壊れない形にエスケープする。
 func TestBenchCommandLineQuotesSingleQuote(t *testing.T) {
 	b := catalog.Bench{Command: "bench", Args: []string{"--name", "it's"}}
-	got, err := benchCommandLine("x", 1, b, catalog.BenchVars{})
+	got, err := benchCommandLine("x-1", b, catalog.BenchVars{})
 	if err != nil {
 		t.Fatal(err)
 	}

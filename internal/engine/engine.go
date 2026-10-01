@@ -3,6 +3,8 @@
 package engine
 
 import (
+	"fmt"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/kyosu-1/isuenv/internal/awsapi"
@@ -24,6 +26,16 @@ const (
 	RoleApp   = "app"
 	RoleBench = "bench"
 )
+
+// NodeName はノードの名前を返す。EC2のNameタグ、sshのホスト名、CLIの表示で共通に使う。
+// 競技ノードは <環境名>-<番号>、ベンチノードは <環境名>-bench。ベンチノードは1環境に
+// 1台しか作れないので番号は要らず、番号付きの名前は競技ノードだけ、と見分けられる。
+func NodeName(env string, index int, role string) string {
+	if role == RoleBench {
+		return env + "-bench"
+	}
+	return fmt.Sprintf("%s-%d", env, index)
+}
 
 type Engine struct {
 	EC2 awsapi.EC2API
