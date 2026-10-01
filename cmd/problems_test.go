@@ -10,7 +10,7 @@ func TestRenderProblems(t *testing.T) {
 	var buf bytes.Buffer
 	renderProblems(&buf)
 	out := buf.String()
-	for _, want := range []string{"NAME", "TYPE", "BENCH TYPE", "isucon13", "isucon14", "ubuntu", "private-isu", "c7a.large", "c7a.xlarge"} {
+	for _, want := range []string{"NAME", "TYPE", "BENCH TYPE", "BENCH CMD", "isucon13", "isucon14", "ubuntu", "private-isu", "c7a.large", "c7a.xlarge"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output should contain %q:\n%s", want, out)
 		}
@@ -34,5 +34,26 @@ func TestRenderProblemsBenchTypeColumn(t *testing.T) {
 	}
 	if got := benchTypes["isucon13"]; got != "-" {
 		t.Errorf("isucon13 has no recommended bench type, want a dash: got %q", got)
+	}
+}
+
+// BENCH CMD 列は `isuenv bench` が使えるかを示す。カタログにベンチの起動方法が
+// 埋まっている問題だけ yes になり、それ以外は NOTES のリンクを読む必要がある。
+func TestRenderProblemsBenchCmdColumn(t *testing.T) {
+	var buf bytes.Buffer
+	renderProblems(&buf)
+	benchCmd := map[string]string{}
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if fields := strings.Fields(line); len(fields) >= 5 {
+			benchCmd[fields[0]] = fields[4]
+		}
+	}
+	for _, name := range []string{"isucon14", "private-isu"} {
+		if got := benchCmd[name]; got != "yes" {
+			t.Errorf("%s bench cmd = %q, want yes", name, got)
+		}
+	}
+	if got := benchCmd["isucon13"]; got != "-" {
+		t.Errorf("isucon13 has no bench command yet, want a dash: got %q", got)
 	}
 }

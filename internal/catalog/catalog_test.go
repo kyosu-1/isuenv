@@ -88,3 +88,91 @@ func TestBenchInstanceTypeOnlyWhereRecommended(t *testing.T) {
 		}
 	}
 }
+
+// ベンチの起動方法を持つ問題は Bench が非nil。v1で埋めるのは isucon14 と private-isu の2問。
+// 「ベンチノードあり(isucon14)」と「専用ベンチバイナリ(private-isu)」の両パターンを踏むことで
+// カタログの形が正しいかを検証できる。
+func TestProblemsWithBench(t *testing.T) {
+	want := map[string]bool{"isucon14": true, "private-isu": true}
+	for _, p := range List() {
+		if p.Bench == nil {
+			if want[p.Name] {
+				t.Errorf("problem %s should have a bench block", p.Name)
+			}
+			continue
+		}
+		if !want[p.Name] {
+			t.Errorf("problem %s has an unexpected bench block", p.Name)
+		}
+		if p.Bench.User == "" || p.Bench.Command == "" || len(p.Bench.Args) == 0 {
+			t.Errorf("problem %s has an incomplete bench block: %+v", p.Name, p.Bench)
+		}
+	}
+}
+
+func TestRenderArgs(t *testing.T) {
+	b := Bench{Args: []string{
+		"run",
+		"--addr", "{{.TargetIP}}:443",
+		"--payment-url", "http://{{.BenchIP}}:12346",
+		"--all", "{{.AllIPs}}",
+	}}
+	got, err := b.RenderArgs(BenchVars{
+		TargetIP: "10.100.0.5",
+		BenchIP:  "10.100.0.9",
+		AllIPs:   "10.100.0.5,10.100.0.6",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"run",
+		"--addr", "10.100.0.5:443",
+		"--payment-url", "http://10.100.0.9:12346",
+		"--all", "10.100.0.5,10.100.0.6",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	}
+}
+
+// 未知の変数はカタログのタイプミスなので、黙って空文字にせずエラーにする。
+func TestRenderArgsUnknownVar(t *testing.T) {
+	b := Bench{Args: []string{"{{.Nope}}"}}
+	if _, err := b.RenderArgs(BenchVars{}); err == nil {
+		t.Fatal("want error for an unknown template variable")
+	}
+}
+
+// isucon14 のベンチはISUXBENCH_TARGETが無ければ --addr/--target をそのまま使う。
+// 手で打つ経路ではsupervisorがいないので、両方を引数で渡す必要がある。
+func TestIsucon14BenchArgs(t *testing.T) {
+	p, err := Lookup("isucon14")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Bench.RenderArgs(BenchVars{TargetIP: "10.100.0.5", BenchIP: "10.100.0.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(got, " ")
+	for _, want := range []string{
+		"--addr 10.100.0.5:443",
+		"--target https://isuride.xiv.isucon.net",
+		"--payment-url http://10.100.0.9:12346",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("args %q should contain %q", joined, want)
+		}
+	}
+	// matsuu の README の `./bench run . run` は `go run . run` を置換した残骸で、
+	// cobra が余分な位置引数を黙って捨てているだけ。カタログには持ち込まない。
+	if strings.Contains(joined, "run . run") {
+		t.Error("args should not carry the stray positional args from matsuu's README")
+	}
+}

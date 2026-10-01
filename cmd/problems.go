@@ -24,14 +24,21 @@ func init() {
 
 func renderProblems(w io.Writer) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSSH USER\tTYPE\tBENCH TYPE\tNOTES")
+	fmt.Fprintln(tw, "NAME\tSSH USER\tTYPE\tBENCH TYPE\tBENCH CMD\tNOTES")
 	for _, p := range catalog.List() {
 		// 推奨値のない問題は "-"。`up --bench` を使うには --bench-instance-type が要ることを示す。
 		bench := "-"
 		if p.BenchInstanceType != "" {
 			bench = p.BenchInstanceType
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.Name, p.SSHUser, p.InstanceType, bench, p.Notes)
+		// BENCH CMD は `isuenv bench` でコマンドを出せるか。カタログにベンチの
+		// 起動方法が埋まっている問題だけ yes になる。埋まっていない問題は
+		// NOTES のリンク先を読んで手で打つことになる。
+		benchCmd := "-"
+		if p.Bench != nil {
+			benchCmd = "yes"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", p.Name, p.SSHUser, p.InstanceType, bench, benchCmd, p.Notes)
 	}
 	tw.Flush()
 }
