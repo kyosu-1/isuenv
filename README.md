@@ -3,6 +3,28 @@
 ISUCON過去問と[private-isu](https://github.com/catatsuy/private-isu)の練習環境を、
 公開AMIからAWS EC2上にコマンド一発で構築・破棄するCLI。
 
+## 対応問題
+
+| 問題名 | 既定タイプ | ベンチ推奨タイプ | `isuenv bench` | AMI・ベンチ手順 |
+| --- | --- | --- | --- | --- |
+| `isucon9-qualify` | `c5.large` | `c7a.xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon9-qualify) |
+| `isucon9-final` | `c5.large` | - | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon9-final) |
+| `isucon10-qualify` | `c5.large` | `r5.large` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon10-qualify) |
+| `isucon10-final` | `c5.large` | `c5.2xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon10-final) |
+| `isucon11-qualify` | `c5.large` | `c4.xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon11-qualify) |
+| `isucon11-final` | `c5.large` | `c5.xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon11-final) |
+| `isucon12-qualify` | `c5.large` | `c5.xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon12-qualify) |
+| `isucon12-final` | `c5.large` | `c5.xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon12-final) |
+| `isucon13` | `c5.large` | `c5.2xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon13) |
+| `isucon14` | `c5.large` | `c5.2xlarge` | 対応 | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon14) |
+| `private-isu` | `c7a.large` | `c7a.xlarge` | 対応 | [catatsuy/private-isu](https://github.com/catatsuy/private-isu#ami) |
+
+- **既定タイプ**: `isuenv up` で `--instance-type` を省略したときのインスタンスタイプ
+- **ベンチ推奨タイプ**: `--bench` で追加されるベンチマーカー専用ノードのタイプ。`-` の問題は `--bench-instance-type` での明示指定が要る
+- **`isuenv bench`**: ベンチ実行コマンドをIPを埋めた状態で表示できるか。`-` の問題はリンク先の手順を読んで手で打つ
+
+手元のバージョンでの最新の一覧は `isuenv problems` で確認できる。
+
 ## インストール
 
 Homebrew（macOSのみ。Cask配布なのでLinuxbrewからは入らない）:
