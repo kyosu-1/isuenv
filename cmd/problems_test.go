@@ -13,7 +13,7 @@ func TestRenderProblems(t *testing.T) {
 	var buf bytes.Buffer
 	renderProblems(&buf)
 	out := buf.String()
-	for _, want := range []string{"NAME", "TYPE", "BENCH TYPE", "BENCH CMD", "isucon13", "isucon14", "ubuntu", "private-isu", "c7a.large", "c7a.xlarge"} {
+	for _, want := range []string{"NAME", "NODES", "TYPE", "BENCH TYPE", "BENCH CMD", "isucon13", "isucon14", "ubuntu", "private-isu", "c7a.large", "c7a.xlarge"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output should contain %q:\n%s", want, out)
 		}
@@ -25,12 +25,19 @@ func TestRenderProblems(t *testing.T) {
 func TestRenderProblemsBenchTypeColumn(t *testing.T) {
 	var buf bytes.Buffer
 	renderProblems(&buf)
-	// NAME / SSH USER / TYPE / BENCH TYPE の4列目を問題ごとに拾う。
+	// NAME / SSH USER / NODES / TYPE / BENCH TYPE の5列目を問題ごとに拾う。
 	benchTypes := map[string]string{}
 	for _, line := range strings.Split(buf.String(), "\n") {
-		if fields := strings.Fields(line); len(fields) >= 4 {
-			benchTypes[fields[0]] = fields[3]
+		if fields := strings.Fields(line); len(fields) >= 5 {
+			benchTypes[fields[0]] = fields[4]
 		}
+	}
+	// CPUやメモリを絞るベンチは、タイプに制限を添えて出す。
+	if got := benchTypes["isucon9-qualify"]; got != "c5.4xlarge(12vCPU)" {
+		t.Errorf("isucon9-qualify bench type = %q, want c5.4xlarge(12vCPU)", got)
+	}
+	if got := benchTypes["isucon13"]; got != "c5.2xlarge(mem=8G)" {
+		t.Errorf("isucon13 bench type = %q, want c5.2xlarge(mem=8G)", got)
 	}
 	if got := benchTypes["private-isu"]; got != "c7a.xlarge" {
 		t.Errorf("private-isu bench type = %q, want c7a.xlarge", got)
@@ -40,21 +47,35 @@ func TestRenderProblemsBenchTypeColumn(t *testing.T) {
 	}
 }
 
-// TYPE 列は、ノードごとの推奨値がある問題では1号機から順に全部並べる。
-func TestRenderProblemsNodeTypesColumn(t *testing.T) {
+// NODES 列は本番の台数、TYPE 列は実効スペック(タイプ + 制限)。
+// ノードごとのスペックがある問題では1号機から順に全部並べる。
+func TestRenderProblemsNodesAndTypeColumns(t *testing.T) {
 	var buf bytes.Buffer
 	renderProblems(&buf)
+	nodes := map[string]string{}
 	types := map[string]string{}
 	for _, line := range strings.Split(buf.String(), "\n") {
-		if fields := strings.Fields(line); len(fields) >= 3 {
-			types[fields[0]] = fields[2]
+		if fields := strings.Fields(line); len(fields) >= 4 {
+			nodes[fields[0]] = fields[2]
+			types[fields[0]] = fields[3]
 		}
 	}
-	if got := types["isucon10-final"]; got != "c5.large,c5.large,c5.xlarge" {
-		t.Errorf("isucon10-final type = %q, want c5.large,c5.large,c5.xlarge", got)
+	wantTypes := map[string]string{
+		"isucon10-final":   "c5.large(mem=1G),c5.large(mem=2G),c5.xlarge(mem=1G)",
+		"isucon10-qualify": "c5.large(1vCPU,mem=2G)",
+		"isucon11-final":   "c5.large(mem=2G)",
+		"isucon13":         "c5.large",
 	}
-	if got := types["isucon13"]; got != "c5.large" {
-		t.Errorf("isucon13 type = %q, want c5.large", got)
+	for name, want := range wantTypes {
+		if got := types[name]; got != want {
+			t.Errorf("%s type = %q, want %q", name, got, want)
+		}
+	}
+	if got := nodes["isucon12-final"]; got != "5" {
+		t.Errorf("isucon12-final nodes = %q, want 5", got)
+	}
+	if got := nodes["isucon13"]; got != "3" {
+		t.Errorf("isucon13 nodes = %q, want 3", got)
 	}
 }
 
@@ -65,8 +86,8 @@ func TestRenderProblemsBenchCmdColumn(t *testing.T) {
 	renderProblems(&buf)
 	benchCmd := map[string]string{}
 	for _, line := range strings.Split(buf.String(), "\n") {
-		if fields := strings.Fields(line); len(fields) >= 5 {
-			benchCmd[fields[0]] = fields[4]
+		if fields := strings.Fields(line); len(fields) >= 6 {
+			benchCmd[fields[0]] = fields[5]
 		}
 	}
 	for _, name := range []string{"isucon14", "private-isu"} {
@@ -83,7 +104,11 @@ func TestRenderProblemsBenchCmdColumn(t *testing.T) {
 // 1台でも混じると `isuenv list` の EST COST が "-" になり、課金の目安が見えなくなる。
 func TestCatalogInstanceTypesHavePrices(t *testing.T) {
 	for _, p := range catalog.List() {
-		for _, typ := range append([]string{p.InstanceType, p.BenchInstanceType}, p.NodeInstanceTypes...) {
+		types := []string{p.InstanceType, p.BenchInstanceType}
+		for _, s := range p.NodeSpecs {
+			types = append(types, s.InstanceType)
+		}
+		for _, typ := range types {
 			if typ == "" {
 				continue
 			}

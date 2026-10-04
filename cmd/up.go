@@ -21,6 +21,7 @@ var (
 	upNodeInstanceTypes []string
 	upBench             bool
 	upBenchInstanceType string
+	upNoLimits          bool
 )
 
 var upCmd = &cobra.Command{
@@ -61,22 +62,22 @@ var upCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		nodeTypes, err := resolveNodeInstanceTypes(upNodes, upInstanceType, upNodeInstanceTypes, p)
+		nodeSpecs, err := resolveNodeSpecs(upNodes, upInstanceType, upNodeInstanceTypes, upNoLimits, p)
 		if err != nil {
 			return err
 		}
-		benchInstanceType, err := resolveBenchInstanceType(upBench, upBenchInstanceType, p)
+		benchSpec, err := resolveBenchSpec(upBench, upBenchInstanceType, upNoLimits, p)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Launching %d node(s) of %s (%s, TTL %s)...\n", upNodes, p.Name, describeNodeTypes(nodeTypes), upTTL)
-		if benchInstanceType != "" {
-			fmt.Printf("  plus 1 bench node (%s)\n", benchInstanceType)
+		fmt.Printf("Launching %d node(s) of %s (%s, TTL %s)...\n", upNodes, p.Name, describeNodeSpecs(nodeSpecs), upTTL)
+		if benchSpec != nil {
+			fmt.Printf("  plus 1 bench node (%s)\n", benchSpec.Label())
 		}
 		nodes, err := e.Up(ctx, engine.UpOptions{
-			Problem: p, AMIID: ami.ID, Nodes: upNodes, NodeInstanceTypes: nodeTypes,
-			BenchInstanceType: benchInstanceType,
-			TTL:               upTTL, KeyName: key, Net: net, Now: time.Now(),
+			Problem: p, AMIID: ami.ID, Nodes: upNodes, NodeSpecs: nodeSpecs,
+			Bench: benchSpec,
+			TTL:   upTTL, KeyName: key, Net: net, Now: time.Now(),
 		})
 		if err != nil {
 			return err
@@ -86,6 +87,9 @@ var upCmd = &cobra.Command{
 		fmt.Printf("\n%s is ready. Auto-terminates in %s.\n\n", p.Name, upTTL)
 		for _, line := range formatNodeLines(p.Name, nodes) {
 			fmt.Println(line)
+		}
+		if note := memLimitNote(nodes); note != "" {
+			fmt.Printf("\n%s\n", note)
 		}
 		if err := refreshSSHConfig(ctx, e); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: ssh config update failed: %v\n", err)
@@ -106,13 +110,16 @@ func resolvedAMILine(a engine.AMI) string {
 	return fmt.Sprintf("  -> %s (%s)", a.ID, a.Name)
 }
 
-// resolveNodeInstanceTypes は競技ノード nodes 台それぞれのインスタンスタイプを1号機から順に決める。
-// 優先順は --node-instance-types、--instance-type、問題ごとの推奨値。
-// 推奨値は問題によって異なる(private-isuはc7a.large、isucon10-finalは3号機だけc5.xlarge)ため、
-// フラグの既定値には持たせられない。
-// --instance-type は全ノードを同じタイプにする指定なので、問題がノードごとの推奨値を持っていても上書きする。
-// --node-instance-types で足りない番号のノードは問題の既定タイプになる。
-func resolveNodeInstanceTypes(nodes int, flagType string, flagNodeTypes []string, p catalog.Problem) ([]string, error) {
+// resolveNodeSpecs は競技ノード nodes 台それぞれのスペック(タイプとCPU・メモリの制限)を1号機から順に決める。
+// 何も指定しなければカタログの値、つまり本番の公式スペックになる。カタログがノードごとの
+// スペックを持つ問題(isucon10-final)では、それより多い台数の残りのノードは問題の既定スペックになる。
+//
+// タイプを明示した(--instance-type は全ノード、--node-instance-types は指定した番号の)ノードは、
+// そのタイプで起動してCPUの制限を外す。CpuOptions の有効値はタイプごとに違い、カタログの値が
+// 指定されたタイプで有効とは限らないため。メモリの制限(mem=)はタイプに依らず効くので残す。
+// --node-instance-types で指定が足りない番号のノードは、カタログのスペックのまま。
+// --no-limits は最後に全ノードの制限を外す(タイプだけで起動する抜け道)。
+func resolveNodeSpecs(nodes int, flagType string, flagNodeTypes []string, noLimits bool, p catalog.Problem) ([]catalog.Spec, error) {
 	if flagType != "" && len(flagNodeTypes) > 0 {
 		return nil, fmt.Errorf("--instance-type and --node-instance-types cannot be used together")
 	}
@@ -124,67 +131,82 @@ func resolveNodeInstanceTypes(nodes int, flagType string, flagNodeTypes []string
 			return nil, fmt.Errorf("--node-instance-types has an empty type at position %d", i+1)
 		}
 	}
-	if flagType != "" {
-		p = catalog.Problem{InstanceType: flagType}
+	specs := p.SpecsFor(nodes)
+	for i := range specs {
+		switch {
+		case flagType != "":
+			specs[i] = specs[i].WithInstanceType(flagType)
+		case i < len(flagNodeTypes):
+			specs[i] = specs[i].WithInstanceType(strings.TrimSpace(flagNodeTypes[i]))
+		}
+		if noLimits {
+			specs[i] = specs[i].Unlimited()
+		}
 	}
-	if len(flagNodeTypes) > 0 {
-		p = catalog.Problem{InstanceType: p.InstanceType, NodeInstanceTypes: flagNodeTypes}
-	}
-	return p.NodeTypes(nodes), nil
+	return specs, nil
 }
 
-// describeNodeTypes は競技ノードのタイプを起動時の1行に載せる形にする。
+// describeNodeSpecs は競技ノードのスペックを起動時の1行に載せる形にする。
 // 全ノード同じなら1つだけ、違うなら1号機から順に全部並べる。
-func describeNodeTypes(types []string) string {
-	if !mixedTypes(types) {
-		if len(types) == 0 {
+func describeNodeSpecs(specs []catalog.Spec) string {
+	labels := make([]string, 0, len(specs))
+	for _, s := range specs {
+		labels = append(labels, s.Label())
+	}
+	if !mixed(labels) {
+		if len(labels) == 0 {
 			return ""
 		}
-		return types[0]
+		return labels[0]
 	}
-	return strings.Join(types, ",")
+	return strings.Join(labels, ",")
 }
 
-func mixedTypes(types []string) bool {
-	for _, t := range types {
-		if t != types[0] {
+func mixed(values []string) bool {
+	for _, v := range values {
+		if v != values[0] {
 			return true
 		}
 	}
 	return false
 }
 
-// resolveBenchInstanceType はベンチマーカー専用ノードのインスタンスタイプを決める。
-// 空文字を返したらベンチノードは作らない(--bench も --bench-instance-type も無い従来の構成)。
-// --bench-instance-type の明示指定は --bench を兼ねる。タイプを指定しておきながら
-// ベンチノードが作られないのは意図と食い違うため。
-func resolveBenchInstanceType(bench bool, flagValue string, p catalog.Problem) (string, error) {
-	if flagValue != "" {
-		return flagValue, nil
+// resolveBenchSpec はベンチマーカー専用ノードのスペックを決める。nil はベンチノードなし。
+// --bench-instance-type の明示指定があればそれを使う(--bench を付けなくてもベンチノードが追加される)。
+// このときカタログのCPU制限は外し、メモリ制限は残す(競技ノードの --instance-type と同じ扱い)。
+// --bench だけなら問題ごとのカタログ値を使うが、ベンチのスペックが非公開の問題にはカタログ値が無い。
+// その場合に競技ノードと同じタイプへ黙って落とすと、ベンチ側が先に飽和するサイズで
+// 起動してしまうので、エラーにして明示指定を求める。
+func resolveBenchSpec(bench bool, flagValue string, noLimits bool, p catalog.Problem) (*catalog.Spec, error) {
+	spec, ok := p.BenchSpec()
+	switch {
+	case flagValue != "":
+		spec = spec.WithInstanceType(flagValue)
+	case !bench:
+		return nil, nil
+	case !ok:
+		return nil, fmt.Errorf("no recommended bench instance type for %q; pass --bench-instance-type explicitly", p.Name)
 	}
-	if !bench {
-		return "", nil
+	if noLimits {
+		spec = spec.Unlimited()
 	}
-	if p.BenchInstanceType == "" {
-		return "", fmt.Errorf("problem %q has no recommended bench instance type; pass --bench-instance-type to choose one", p.Name)
-	}
-	return p.BenchInstanceType, nil
+	return &spec, nil
 }
 
 // formatNodeLines は up の結果表示の行を組み立てる。
-// ベンチノードがある構成と、競技ノードのタイプが揃っていない構成でだけタイプとロールの列を足す
-// (どれがベンチか、どのノードが大きいかを判別できるようにするため)。
+// ベンチノードがある構成、競技ノードのタイプが揃っていない構成、CPUやメモリを絞った構成でだけ
+// タイプ(と制限)とロールの列を足す(どれがベンチか、どのノードがどのスペックかを判別できるようにするため)。
 // 先頭の列はsshのホスト名そのものなので、ロール表示時は `(ssh ...)` の案内を省いて横幅を詰める。
 func formatNodeLines(name string, nodes []engine.Node) []string {
-	hasBench := false
-	types := make([]string, 0, len(nodes))
+	detailed := false
+	labels := make([]string, 0, len(nodes))
 	for _, n := range nodes {
-		if n.Role == engine.RoleBench {
-			hasBench = true
+		if n.Role == engine.RoleBench || n.LimitVCPUs > 0 || n.LimitMemGB > 0 {
+			detailed = true
 		}
-		types = append(types, n.InstanceType)
+		labels = append(labels, n.TypeLabel())
 	}
-	if !hasBench && !mixedTypes(types) {
+	if !detailed && !mixed(labels) {
 		lines := make([]string, 0, len(nodes))
 		for _, n := range nodes {
 			lines = append(lines, fmt.Sprintf("  %s-%d  public %s  private %s  (ssh %s-%d)", name, n.Index, n.PublicIP, n.PrivateIP, name, n.Index))
@@ -198,19 +220,31 @@ func formatNodeLines(name string, nodes []engine.Node) []string {
 		if role == "" {
 			role = engine.RoleApp
 		}
-		fmt.Fprintf(tw, "  %s\tpublic %s\tprivate %s\t%s\t%s\n", engine.NodeName(name, n.Index, n.Role), n.PublicIP, n.PrivateIP, n.InstanceType, role)
+		fmt.Fprintf(tw, "  %s\tpublic %s\tprivate %s\t%s\t%s\n", engine.NodeName(name, n.Index, n.Role), n.PublicIP, n.PrivateIP, n.TypeLabel(), role)
 	}
 	tw.Flush()
 	return strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+}
+
+// memLimitNote はメモリを絞ったノードがあるときの案内。mem= はカーネル引数なので、
+// 起動直後にuser-dataが1回再起動する。その間はsshが切れるので、知らないと障害に見える。
+func memLimitNote(nodes []engine.Node) string {
+	for _, n := range nodes {
+		if n.LimitMemGB > 0 {
+			return "Nodes with a mem= limit reboot once right after launch to apply it; ssh may be refused for a minute or two."
+		}
+	}
+	return ""
 }
 
 func init() {
 	upCmd.Flags().IntVar(&upNodes, "nodes", 1, "number of nodes to launch")
 	upCmd.Flags().DurationVar(&upTTL, "ttl", 8*time.Hour, "auto-terminate after this duration")
 	// 説明文のバックティックはcobraが引数プレースホルダ名として解釈するため使わない。
-	upCmd.Flags().StringVar(&upInstanceType, "instance-type", "", "EC2 instance type (default: per-problem, see 'isuenv problems')")
+	upCmd.Flags().StringVar(&upInstanceType, "instance-type", "", "EC2 instance type for all nodes; drops the per-problem CPU limit (default: per-problem, see 'isuenv problems')")
 	upCmd.Flags().StringSliceVar(&upNodeInstanceTypes, "node-instance-types", nil, "comma-separated EC2 instance types per node, from node 1 (default: per-problem)")
 	upCmd.Flags().BoolVar(&upBench, "bench", false, "add one benchmarker node using the per-problem bench instance type")
 	upCmd.Flags().StringVar(&upBenchInstanceType, "bench-instance-type", "", "EC2 instance type for the benchmarker node (implies --bench)")
+	upCmd.Flags().BoolVar(&upNoLimits, "no-limits", false, "launch plain instance types without the per-problem CPU and memory limits")
 	rootCmd.AddCommand(upCmd)
 }

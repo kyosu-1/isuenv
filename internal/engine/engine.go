@@ -19,6 +19,11 @@ const (
 	// 両者はインスタンスタイプが異なりうるので、タグに残しておかないと
 	// ローカルに状態を持たないCLIからは後で見分けられない。
 	TagRole = "isuenv:role"
+	// TagVCPUs / TagMemGB は起動時にかけた制限(CpuOptions で絞った後のvCPU数、mem= のGiB数)。
+	// 制限をかけたノードにだけ付ける。メモリ制限はインスタンスの外から見えないので、
+	// タグに残しておかないと list などで表示できない。
+	TagVCPUs = "isuenv:vcpus"
+	TagMemGB = "isuenv:mem-gb"
 )
 
 // isuenv:role タグの値。

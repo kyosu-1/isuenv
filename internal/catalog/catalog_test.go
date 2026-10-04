@@ -33,29 +33,178 @@ func TestListDefaultsInstanceType(t *testing.T) {
 	}
 }
 
-// ノードごとの推奨タイプは、本番で競技ノードのスペックが揃っていなかった問題にだけ設定する。
-// isucon10-final は isu3 だけ4コア(上流READMEの Expected machine specs)。
-func TestNodeInstanceTypesOnlyWhereSpecsDiffer(t *testing.T) {
-	want := map[string]string{"isucon10-final": "c5.large,c5.large,c5.xlarge"}
+// カタログのスペックは本番の公式スペックに合わせる。問題を足したり値を変えたりしたときに
+// 気づけるよう、全問題の実効スペック(タイプ + CPU・メモリの制限)と本番の台数をここに固定する。
+// 根拠は catalog.yaml の各問題のコメント。
+func TestOfficialSpecs(t *testing.T) {
+	type want struct {
+		nodes int
+		app   string // 1号機から本番の台数ぶんを並べたもの(全ノード同じなら1つ)
+		bench string // 空はベンチのスペックが非公開
+	}
+	wants := map[string]want{
+		"isucon9-qualify":  {3, "c5.large", "c5.4xlarge(12vCPU)"},
+		"isucon9-final":    {3, "c5.large(mem=1G)", ""},
+		"isucon10-qualify": {3, "c5.large(1vCPU,mem=2G)", "r5.large(1vCPU)"},
+		"isucon10-final":   {3, "c5.large(mem=1G),c5.large(mem=2G),c5.xlarge(mem=1G)", "c5.2xlarge"},
+		"isucon11-qualify": {3, "c5.large", "c4.xlarge"},
+		"isucon11-final":   {3, "c5.large(mem=2G)", "c5.xlarge"},
+		"isucon12-qualify": {3, "c5.large", "c5.xlarge"},
+		"isucon12-final":   {5, "c5.large", "c5.xlarge"},
+		"isucon13":         {3, "c5.large", "c5.2xlarge(mem=8G)"},
+		"isucon14":         {3, "c5.large", "c5.2xlarge(mem=8G)"},
+		"private-isu":      {1, "c7a.large", "c7a.xlarge"},
+	}
 	for _, p := range List() {
-		if got := strings.Join(p.NodeInstanceTypes, ","); got != want[p.Name] {
-			t.Errorf("problem %s node instance types = %q, want %q", p.Name, got, want[p.Name])
+		w, ok := wants[p.Name]
+		if !ok {
+			t.Errorf("problem %s is missing from this test; decide its official spec explicitly", p.Name)
+			continue
+		}
+		if p.OfficialNodes != w.nodes {
+			t.Errorf("problem %s official nodes = %d, want %d", p.Name, p.OfficialNodes, w.nodes)
+		}
+		var labels []string
+		for _, s := range p.SpecsFor(p.OfficialNodes) {
+			if len(labels) == 0 || len(p.NodeSpecs) > 0 {
+				labels = append(labels, s.Label())
+			}
+		}
+		if got := strings.Join(labels, ","); got != w.app {
+			t.Errorf("problem %s app spec = %q, want %q", p.Name, got, w.app)
+		}
+		bench := ""
+		if s, ok := p.BenchSpec(); ok {
+			bench = s.Label()
+		}
+		if bench != w.bench {
+			t.Errorf("problem %s bench spec = %q, want %q", p.Name, bench, w.bench)
 		}
 	}
 }
 
-func TestNodeTypes(t *testing.T) {
-	p := Problem{InstanceType: "c5.large", NodeInstanceTypes: []string{"c5.large", "c5.large", "c5.xlarge"}}
-	// 一覧より多い台数の残りは InstanceType になる。
-	if got := strings.Join(p.NodeTypes(4), ","); got != "c5.large,c5.large,c5.xlarge,c5.large" {
+// カタログの cpu_options と mem_gb が、そのインスタンスタイプで実際に指定できる値かを確かめる。
+// 無効な CpuOptions は RunInstances がエラーになり、タイプのメモリ以上の mem= は何も絞らない。
+// 表は 2026-10-05 に ap-northeast-1 の `aws ec2 describe-instance-types` (VCpuInfo / MemoryInfo)で
+// 確認した値。カタログに新しいタイプを足すときは、同じコマンドで確認してここにも足すこと。
+func TestCatalogLimitsAreValidForInstanceType(t *testing.T) {
+	type shape struct {
+		validCores          []int32
+		validThreadsPerCore []int32
+		memMiB              int
+	}
+	shapes := map[string]shape{
+		"c4.xlarge":  {[]int32{1, 2}, []int32{1, 2}, 7680},
+		"c5.large":   {[]int32{1}, []int32{1, 2}, 4096},
+		"c5.xlarge":  {[]int32{2}, []int32{1, 2}, 8192},
+		"c5.2xlarge": {[]int32{2, 4}, []int32{1, 2}, 16384},
+		"c5.4xlarge": {[]int32{2, 4, 6, 8}, []int32{1, 2}, 32768},
+		"c7a.large":  {[]int32{1, 2}, []int32{1}, 4096},
+		"c7a.xlarge": {[]int32{1, 2, 3, 4}, []int32{1}, 8192},
+		"r5.large":   {[]int32{1}, []int32{1, 2}, 16384},
+	}
+	contains := func(list []int32, v int32) bool {
+		for _, x := range list {
+			if x == v {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range List() {
+		specs := append([]Spec{p.DefaultSpec()}, p.NodeSpecs...)
+		if s, ok := p.BenchSpec(); ok {
+			specs = append(specs, s)
+		}
+		for _, s := range specs {
+			// バースト系はCPUクレジットの残量でスコアが揺れるので使わない。
+			if strings.HasPrefix(s.InstanceType, "t") {
+				t.Errorf("problem %s uses burstable type %s", p.Name, s.InstanceType)
+			}
+			sh, ok := shapes[s.InstanceType]
+			if !ok {
+				t.Errorf("problem %s uses %s, which is missing from this test; check it with describe-instance-types", p.Name, s.InstanceType)
+				continue
+			}
+			if c := s.CPUOptions; c != nil {
+				if !contains(sh.validCores, c.CoreCount) || !contains(sh.validThreadsPerCore, c.ThreadsPerCore) {
+					t.Errorf("problem %s: cpu_options %+v is not valid for %s (cores %v, threads per core %v)",
+						p.Name, *c, s.InstanceType, sh.validCores, sh.validThreadsPerCore)
+				}
+			}
+			if s.MemGB < 0 || s.MemGB*1024 >= sh.memMiB {
+				t.Errorf("problem %s: mem_gb %d does not limit %s (%d MiB)", p.Name, s.MemGB, s.InstanceType, sh.memMiB)
+			}
+		}
+	}
+}
+
+func TestSpecsFor(t *testing.T) {
+	p := Problem{InstanceType: "c5.large", MemGB: 1, NodeSpecs: []Spec{
+		{InstanceType: "c5.large", MemGB: 1},
+		{InstanceType: "c5.large", MemGB: 2},
+		{InstanceType: "c5.xlarge", MemGB: 1},
+	}}
+	label := func(specs []Spec) string {
+		var labels []string
+		for _, s := range specs {
+			labels = append(labels, s.Label())
+		}
+		return strings.Join(labels, ",")
+	}
+	// 一覧より多い台数の残りは既定スペックになる。
+	if got := label(p.SpecsFor(4)); got != "c5.large(mem=1G),c5.large(mem=2G),c5.xlarge(mem=1G),c5.large(mem=1G)" {
 		t.Errorf("got %q", got)
 	}
-	if got := strings.Join(p.NodeTypes(2), ","); got != "c5.large,c5.large" {
+	// 少ない台数なら1号機から順に使う。
+	if got := label(p.SpecsFor(2)); got != "c5.large(mem=1G),c5.large(mem=2G)" {
 		t.Errorf("got %q", got)
 	}
-	uniform := Problem{InstanceType: "c7a.large"}
-	if got := strings.Join(uniform.NodeTypes(2), ","); got != "c7a.large,c7a.large" {
+	uniform := Problem{InstanceType: "c5.large", CPUOptions: &CPUOptions{CoreCount: 1, ThreadsPerCore: 1}, MemGB: 2}
+	if got := label(uniform.SpecsFor(2)); got != "c5.large(1vCPU,mem=2G),c5.large(1vCPU,mem=2G)" {
 		t.Errorf("got %q", got)
+	}
+}
+
+// node_specs で instance_type を省略したノードは、問題の既定タイプになる。
+func TestListDefaultsNodeSpecInstanceType(t *testing.T) {
+	for _, p := range List() {
+		for i, s := range p.NodeSpecs {
+			if s.InstanceType == "" {
+				t.Errorf("problem %s node %d: instance type should have been defaulted by List()", p.Name, i+1)
+			}
+		}
+	}
+}
+
+func TestSpecLabel(t *testing.T) {
+	tests := []struct {
+		spec Spec
+		want string
+	}{
+		{Spec{InstanceType: "c5.large"}, "c5.large"},
+		{Spec{InstanceType: "c5.large", MemGB: 2}, "c5.large(mem=2G)"},
+		{Spec{InstanceType: "c5.4xlarge", CPUOptions: &CPUOptions{CoreCount: 6, ThreadsPerCore: 2}}, "c5.4xlarge(12vCPU)"},
+		{Spec{InstanceType: "c5.large", CPUOptions: &CPUOptions{CoreCount: 1, ThreadsPerCore: 1}, MemGB: 2}, "c5.large(1vCPU,mem=2G)"},
+	}
+	for _, tt := range tests {
+		if got := tt.spec.Label(); got != tt.want {
+			t.Errorf("got %q, want %q", got, tt.want)
+		}
+	}
+}
+
+// タイプを明示指定されたらCPUの制限は外し(そのタイプで有効とは限らない)、メモリの制限は残す。
+func TestSpecOverrides(t *testing.T) {
+	s := Spec{InstanceType: "c5.large", CPUOptions: &CPUOptions{CoreCount: 1, ThreadsPerCore: 1}, MemGB: 2}
+	if got := s.WithInstanceType("c6i.large").Label(); got != "c6i.large(mem=2G)" {
+		t.Errorf("WithInstanceType: got %q", got)
+	}
+	if got := s.Unlimited().Label(); got != "c5.large" {
+		t.Errorf("Unlimited: got %q", got)
+	}
+	if !s.Limited() || s.Unlimited().Limited() {
+		t.Error("Limited should report whether any limit is set")
 	}
 }
 
@@ -102,12 +251,12 @@ func TestLookupPrivateISU(t *testing.T) {
 	}
 }
 
-// ベンチ用タイプは推奨値の根拠がある問題にだけ設定する。根拠は上流が明記した推奨タイプか、
-// 本番のベンチのスペック(それを満たす最小のタイプに読み替える)。無根拠な既定値を配らないため、
-// スペックが公開されていない isucon9-final は空のままであることを確かめる。
+// ベンチ用タイプは根拠がある問題にだけ設定する。根拠は上流が明記した推奨タイプか、
+// 本番のベンチのスペック(CPU・メモリの制限と合わせて再現できるタイプにする。制限は TestOfficialSpecs)。
+// 無根拠な既定値を配らないため、スペックが公開されていない isucon9-final は空のままであることを確かめる。
 func TestBenchInstanceTypeOnlyWhereRecommended(t *testing.T) {
 	want := map[string]string{
-		"isucon9-qualify":  "c7a.xlarge",
+		"isucon9-qualify":  "c5.4xlarge",
 		"isucon9-final":    "",
 		"isucon10-qualify": "r5.large",
 		"isucon10-final":   "c5.2xlarge",

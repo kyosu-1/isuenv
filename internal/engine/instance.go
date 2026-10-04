@@ -30,31 +30,40 @@ type Node struct {
 	InstanceType string
 	// Role は RoleApp か RoleBench。isuenv:role タグを持たない古いインスタンスでは空になる。
 	Role string
+	// LimitVCPUs / LimitMemGB は起動時にかけた制限(isuenv:vcpus / isuenv:mem-gb タグ)。0 は制限なし。
+	LimitVCPUs int
+	LimitMemGB int
+}
+
+// TypeLabel はインスタンスタイプに起動時の制限を添えた表示(例: c5.large(1vCPU,mem=2G))。
+func (n Node) TypeLabel() string {
+	return catalog.FormatLabel(n.InstanceType, n.LimitVCPUs, n.LimitMemGB)
 }
 
 type UpOptions struct {
-	Problem      catalog.Problem
-	AMIID        string
-	Nodes        int
+	Problem catalog.Problem
+	AMIID   string
+	Nodes   int
+	// InstanceType は NodeSpecs に無い番号の競技ノードのタイプ(制限なし)。
 	InstanceType string
-	// NodeInstanceTypes は競技ノードごとのインスタンスタイプ(1号機から順)。
-	// ここに無い番号のノードは InstanceType になる。空なら全ノードが InstanceType。
-	NodeInstanceTypes []string
-	// BenchInstanceType が非空なら、競技ノードの次の番号でベンチマーカー用ノードを1台追加する。
-	// 空ならベンチノードは作らない。
-	BenchInstanceType string
-	TTL               time.Duration
-	KeyName           string
-	Net               Network
-	Now               time.Time
+	// NodeSpecs は競技ノードごとのスペック(1号機から順)。タイプに加えてCPUとメモリの制限を持つ。
+	// ここに無い番号のノードは InstanceType を制限なしで使う。
+	NodeSpecs []catalog.Spec
+	// Bench が非nilなら、競技ノードの次の番号でベンチマーカー用ノードを1台追加する。
+	// nilならベンチノードは作らない。
+	Bench   *catalog.Spec
+	TTL     time.Duration
+	KeyName string
+	Net     Network
+	Now     time.Time
 }
 
-// launch は1インスタンスの起動内容。RunInstancesの引数が(番号, タイプ, ロール)でしか
+// launch は1インスタンスの起動内容。RunInstancesの引数が(番号, スペック, ロール)でしか
 // 変わらないので、起動ループの中で分岐させずに先に組み立てておく。
 type launch struct {
-	index        int
-	instanceType string
-	role         string
+	index int
+	spec  catalog.Spec
+	role  string
 }
 
 // buildLaunches は起動するインスタンスの一覧を組み立てる。
@@ -63,16 +72,42 @@ type launch struct {
 func buildLaunches(opts UpOptions) []launch {
 	launches := make([]launch, 0, opts.Nodes+1)
 	for i := 1; i <= opts.Nodes; i++ {
-		instanceType := opts.InstanceType
-		if i <= len(opts.NodeInstanceTypes) {
-			instanceType = opts.NodeInstanceTypes[i-1]
+		spec := catalog.Spec{InstanceType: opts.InstanceType}
+		if i <= len(opts.NodeSpecs) {
+			spec = opts.NodeSpecs[i-1]
 		}
-		launches = append(launches, launch{index: i, instanceType: instanceType, role: RoleApp})
+		launches = append(launches, launch{index: i, spec: spec, role: RoleApp})
 	}
-	if opts.BenchInstanceType != "" {
-		launches = append(launches, launch{index: opts.Nodes + 1, instanceType: opts.BenchInstanceType, role: RoleBench})
+	if opts.Bench != nil {
+		launches = append(launches, launch{index: opts.Nodes + 1, spec: *opts.Bench, role: RoleBench})
 	}
 	return launches
+}
+
+// cpuOptionsRequest はスペックのCPU制限を RunInstances の CpuOptions にする。制限が無ければ nil
+// (nil ならインスタンスタイプの既定のコア数・スレッド数で起動する)。
+// CpuOptions を指定できるのは起動時だけで、起動後には変えられない。
+func cpuOptionsRequest(spec catalog.Spec) *ec2types.CpuOptionsRequest {
+	if spec.CPUOptions == nil {
+		return nil
+	}
+	return &ec2types.CpuOptionsRequest{
+		CoreCount:      aws.Int32(spec.CPUOptions.CoreCount),
+		ThreadsPerCore: aws.Int32(spec.CPUOptions.ThreadsPerCore),
+	}
+}
+
+// limitTags は起動時にかけた制限をタグに残す。メモリ制限はインスタンスの外から見えず、
+// CPUも「タイプの既定より絞ったか」はAPIから分からないので、list や up の表示のためにタグで持つ。
+func limitTags(spec catalog.Spec) []ec2types.Tag {
+	var tags []ec2types.Tag
+	if spec.CPUOptions != nil {
+		tags = append(tags, ec2types.Tag{Key: aws.String(TagVCPUs), Value: aws.String(strconv.Itoa(spec.CPUOptions.VCPUs()))})
+	}
+	if spec.MemGB > 0 {
+		tags = append(tags, ec2types.Tag{Key: aws.String(TagMemGB), Value: aws.String(strconv.Itoa(spec.MemGB))})
+	}
+	return tags
 }
 
 // Up は環境を起動し、全ノードがrunningかつパブリックIP付与済みになるまで待つ。
@@ -100,13 +135,15 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 
 	expiresAt := opts.Now.Add(opts.TTL)
 	expires := expiresAt.UTC().Format(time.RFC3339)
-	userData := base64.StdEncoding.EncodeToString([]byte(BuildUserData(expiresAt)))
 
 	var ids []string
 	for _, l := range buildLaunches(opts) {
+		// メモリ制限はノードごとに違いうるので、user-dataもノードごとに組み立てる。
+		userData := base64.StdEncoding.EncodeToString([]byte(BuildUserData(expiresAt, l.spec.MemGB)))
 		out, err := e.EC2.RunInstances(ctx, &ec2.RunInstancesInput{
 			ImageId:                           aws.String(opts.AMIID),
-			InstanceType:                      ec2types.InstanceType(l.instanceType),
+			InstanceType:                      ec2types.InstanceType(l.spec.InstanceType),
+			CpuOptions:                        cpuOptionsRequest(l.spec),
 			MinCount:                          aws.Int32(1),
 			MaxCount:                          aws.Int32(1),
 			KeyName:                           aws.String(opts.KeyName),
@@ -116,14 +153,14 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 			InstanceInitiatedShutdownBehavior: ec2types.ShutdownBehaviorTerminate,
 			TagSpecifications: []ec2types.TagSpecification{{
 				ResourceType: ec2types.ResourceTypeInstance,
-				Tags: []ec2types.Tag{
+				Tags: append([]ec2types.Tag{
 					{Key: aws.String(TagManaged), Value: aws.String("true")},
 					{Key: aws.String(TagEnv), Value: aws.String(name)},
 					{Key: aws.String(TagNode), Value: aws.String(strconv.Itoa(l.index))},
 					{Key: aws.String(TagExpires), Value: aws.String(expires)},
 					{Key: aws.String(TagRole), Value: aws.String(l.role)},
 					{Key: aws.String("Name"), Value: aws.String(NodeName(name, l.index, l.role))},
-				},
+				}, limitTags(l.spec)...),
 			}},
 		})
 		if err != nil {
@@ -212,7 +249,7 @@ type Env struct {
 	Nodes      []Node
 }
 
-// InstanceTypeSummary は環境のインスタンスタイプを1行で表す。
+// InstanceTypeSummary は環境のインスタンスタイプ(制限があればそれも)を1行で表す。
 // ベンチノードだけ別タイプという構成がありうるので、環境に単一のタイプを持たせるのではなく
 // ノードごとのタイプから組み立てる。
 func (env Env) InstanceTypeSummary() string {
@@ -220,10 +257,10 @@ func (env Env) InstanceTypeSummary() string {
 	for _, n := range env.Nodes {
 		// isuenv:role タグを持たない古いインスタンスは競技ノードとして扱う。
 		if n.Role == RoleBench {
-			bench = appendUnique(bench, n.InstanceType)
+			bench = appendUnique(bench, n.TypeLabel())
 			continue
 		}
-		app = appendUnique(app, n.InstanceType)
+		app = appendUnique(app, n.TypeLabel())
 	}
 	summary := strings.Join(app, ",")
 	if len(bench) > 0 {
@@ -244,7 +281,12 @@ func appendUnique(list []string, v string) []string {
 // newNode はDescribeInstancesの結果から1ノードを組み立てる。waitRunningとListで
 // 同じ埋め方をする必要があるため関数に切り出している。
 func newNode(index int, inst ec2types.Instance) Node {
+	// 制限のタグが無い(制限なし、または古いインスタンス)場合は Atoi が失敗して 0 になる。
+	vcpus, _ := strconv.Atoi(tagValue(inst.Tags, TagVCPUs))
+	memGB, _ := strconv.Atoi(tagValue(inst.Tags, TagMemGB))
 	return Node{
+		LimitVCPUs:   vcpus,
+		LimitMemGB:   memGB,
 		Index:        index,
 		ID:           aws.ToString(inst.InstanceId),
 		PublicIP:     aws.ToString(inst.PublicIpAddress),
