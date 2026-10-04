@@ -1,44 +1,94 @@
+# 各問題のスペックは「本番の公式スペック」に合わせる。根拠(上流README・当日マニュアル・公式ブログ)を
+# 値ごとにコメントで残すこと。非公開の値は推測で埋めず、未設定のままにして「非公開」と書く。
+#
+# スペックの書き方:
+#   official_nodes               本番の競技サーバーの台数(表示用。`up --nodes` の既定値は 1 のまま)
+#   instance_type                競技ノードのタイプ(省略時 c5.large)
+#   cpu_options                  RunInstances の CpuOptions。{core_count, threads_per_core}
+#   mem_gb                       カーネル引数 mem=<N>G でOSから見えるメモリを絞る(user-data が grub に書いて1回再起動する)
+#   node_specs                   ノードごとにスペックが違う問題だけ。1号機から順に {instance_type, cpu_options, mem_gb}
+#   bench_instance_type / bench_cpu_options / bench_mem_gb   ベンチマーカー専用ノードの同じもの
+#
+# cpu_options の有効値はタイプごとに決まっている。2026-10-05 に ap-northeast-1 の
+# `aws ec2 describe-instance-types` (VCpuInfo) で確認した値:
+#   c5.large    2vCPU /  4GiB  ValidCores [1]        ValidThreadsPerCore [1,2]
+#   c5.xlarge   4vCPU /  8GiB  ValidCores [2]        ValidThreadsPerCore [1,2]
+#   c5.2xlarge  8vCPU / 16GiB  ValidCores [2,4]      ValidThreadsPerCore [1,2]
+#   c5.4xlarge 16vCPU / 32GiB  ValidCores [2,4,6,8]  ValidThreadsPerCore [1,2]
+#   r5.large    2vCPU / 16GiB  ValidCores [1]        ValidThreadsPerCore [1,2]
+#   c4.xlarge   4vCPU / 7.5GiB ValidCores [1,2]      ValidThreadsPerCore [1,2]
+#   c7a.large   2vCPU /  4GiB  ValidCores [1,2]      ValidThreadsPerCore [1]
+#   c7a.xlarge  4vCPU /  8GiB  ValidCores [1,2,3,4]  ValidThreadsPerCore [1]
+# t 系(バースト)はスコアが不安定になるので使わない。
 problems:
   - name: isucon9-qualify
     ami_pattern: "isucon9-qualify-*"
     owner_id: "839726181030"
     ssh_user: ubuntu
-    # 上流(isucon/isucon9-qualify)のREADMEがベンチ用AMIの推奨タイプを c7a.xlarge としている。
-    # 同じ表の競技側推奨は c7a.large だが、こちらは matsuu AMI の既定(c5.large)のままにしている。
-    bench_instance_type: c7a.xlarge
+    # 本番の競技サーバーは Alibaba Cloud ecs.sn1ne.large(2vCPU / 4GB)が最大3台(上流README・当日マニュアル)。
+    # c5.large(2vCPU / 4GiB)がちょうど同じなので制限は要らない。
+    official_nodes: 3
+    # 本番のベンチは ecs.sn1ne.3xlarge(12vCPU)。AWSに12vCPUのタイプは無いので、
+    # c5.4xlarge(16vCPU)を CoreCount=6 / ThreadsPerCore=2 で 12vCPU に絞る
+    # (c5.4xlarge の ValidCores に 6 があることを確認済み)。
+    # ベンチのメモリは非公開なので制限しない(c5.4xlarge の 32GiB のまま)。
+    bench_instance_type: c5.4xlarge
+    bench_cpu_options: {core_count: 6, threads_per_core: 2}
     notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon9-qualify"
   - name: isucon9-final
     ami_pattern: "isucon9-final-*"
     owner_id: "839726181030"
     ssh_user: ubuntu
-    # ベンチのスペックは上流のREADME・マニュアル・公式ブログのどこにも公開されていないため、
+    # 本番の競技サーバーは「2コア / メモリ1GB」が3台(当日マニュアル)。メモリ4GBのタイプを
+    # カーネル引数 mem=1G で絞っていたので、c5.large(2vCPU / 4GiB)を同じく mem=1G にする。
+    official_nodes: 3
+    mem_gb: 1
+    # ベンチのスペックは上流のREADME・マニュアル・公式ブログのどこにも公開されていないため(非公開)、
     # bench_instance_type は設定しない(--bench-instance-type での明示指定が要る)。
     notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon9-final"
   - name: isucon10-qualify
     ami_pattern: "isucon10-qualify-*"
     owner_id: "839726181030"
     ssh_user: ubuntu
-    # 本番のベンチは「1コア / 16GiB」(上流README)。AWSに同じ形は無いので、
-    # メモリ16GiBを満たす最小の r5.large(2vCPU / 16GiB) にする。
+    # 本番の競技サーバーは「1コア / 2GiB」が3台(上流README)。AWSに同じ形の非バーストのタイプは無いので、
+    # c5.large(2vCPU / 4GiB)を CoreCount=1 / ThreadsPerCore=1 で 1vCPU に、mem=2G で 2GiB に絞る。
+    # 「1コア」が物理コアか論理スレッドかは一次情報では断定できない。ここでは1スレッド(1vCPU)として再現する
+    # (c5.large は物理1コア2スレッドなので、物理コアの意味なら cpu_options を外した状態が相当する)。
+    official_nodes: 3
+    cpu_options: {core_count: 1, threads_per_core: 1}
+    mem_gb: 2
+    # 本番のベンチは「1コア / 16GiB」(上流README)。r5.large(2vCPU / 16GiB)を
+    # CoreCount=1 / ThreadsPerCore=1 で 1vCPU に絞る。メモリは 16GiB でちょうど同じ。
+    # 「1コア」の解釈は競技サーバーと同じく1スレッドとする。
     bench_instance_type: r5.large
+    bench_cpu_options: {core_count: 1, threads_per_core: 1}
     notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon10-qualify"
   - name: isucon10-final
     ami_pattern: "isucon10-final-*"
     owner_id: "839726181030"
     ssh_user: ubuntu
-    # 本番の競技ノードは isu1「2コア / 1GiB」、isu2「2コア / 2GiB」、isu3「4コア / 1GiB」
-    # (上流READMEの Expected machine specs)。3号機だけ 4vCPU の c5.xlarge にする。
-    # メモリの差はインスタンスタイプでは再現できない。AMIの contestant.slice が全ノードで
-    # envoy・MySQL・アプリの合計を MemoryMax=1200M に制限しているため
-    # (2号機を 2GiB にするにはインスタンス内でこの値を書き換える)。
-    node_instance_types: [c5.large, c5.large, c5.xlarge]
+    # 本番の競技サーバーは3台でスペックが揃っていない: isu1「2コア / 1GiB」、isu2「2コア / 2GiB」、
+    # isu3「4コア / 1GiB」(上流READMEの Expected machine specs)。
+    # コア数はタイプで合わせ(c5.large = 2vCPU、c5.xlarge = 4vCPU)、メモリは mem= で絞る。
+    # 2コア・4コアは vCPU 数として再現する(isucon10-qualify と同じく、物理コアかどうかは断定できない)。
+    # なお、AMIの contestant.slice が全ノードで envoy・MySQL・アプリの合計を MemoryMax=1200M に
+    # 制限している。2号機は mem=2G でOS全体が 2GiB になっても、この slice の上限は 1200M のまま。
+    official_nodes: 3
+    node_specs:
+      - {instance_type: c5.large, mem_gb: 1}
+      - {instance_type: c5.large, mem_gb: 2}
+      - {instance_type: c5.xlarge, mem_gb: 1}
+    # 4台目以降(本番には無い)に使う既定スペック。1号機と同じにしておく。
+    mem_gb: 1
     # 本番のベンチは「8コア / 16GiB」(上流README)。c5.2xlarge がちょうど同じ。
     bench_instance_type: c5.2xlarge
-    notes: "本番は3台構成(3号機のみ4コア)。bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon10-final"
+    notes: "本番は3台でスペックが不揃い。bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon10-final"
   - name: isucon11-qualify
     ami_pattern: "isucon11-qualify-*"
     owner_id: "839726181030"
     ssh_user: ubuntu
+    # 本番の競技サーバーは c5.large が3台(上流README)。既定タイプのままで一致する。
+    official_nodes: 3
     # 上流READMEに「ベンチ VM: c4.xlarge」と明記されている。
     bench_instance_type: c4.xlarge
     notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon11-qualify"
@@ -46,6 +96,10 @@ problems:
     ami_pattern: "isucon11-final-*"
     owner_id: "839726181030"
     ssh_user: ubuntu
+    # 本番の競技サーバーは c5.large が3台で、カーネル引数 mem=2G でメモリを 2GiB に絞っていた
+    # (上流README・上流の provisioning)。同じく mem=2G にする(free の表示は約1.9GBになる)。
+    official_nodes: 3
+    mem_gb: 2
     # 上流READMEに「ベンチマーカー: c5.xlarge」と明記されている。
     bench_instance_type: c5.xlarge
     notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon11-final"
@@ -53,6 +107,8 @@ problems:
     ami_pattern: "isucon12-qualify-*"
     owner_id: "839726181030"
     ssh_user: ubuntu
+    # 本番の競技サーバーは c5.large が3台(上流README)。既定タイプのままで一致する。
+    official_nodes: 3
     # 本番のベンチは ECS Fargate (4vCPU / 8GB)(上流README)。c5.xlarge がちょうど同じ。
     bench_instance_type: c5.xlarge
     notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon12-qualify"
@@ -60,6 +116,8 @@ problems:
     ami_pattern: "isucon12-final-*"
     owner_id: "839726181030"
     ssh_user: ubuntu
+    # 本番の競技サーバーは「2 vCPU / 4GB RAM」が5台(上流README)。c5.large がちょうど同じ。
+    official_nodes: 5
     # 本番のベンチは「4 vCPU / 8GB RAM」(上流README)。c5.xlarge がちょうど同じ。
     bench_instance_type: c5.xlarge
     notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon12-final"
@@ -67,17 +125,23 @@ problems:
     ami_pattern: "isucon13-*"
     owner_id: "839726181030"
     ssh_user: ubuntu
-    # 本番のベンチは ECS Fargate (8vCPU / 8GB)(上流README)。8vCPUを満たす最小の
-    # c5.2xlarge(8vCPU / 16GiB) にする。
+    # 本番の競技サーバーは c5.large が3台(上流README)。既定タイプのままで一致する。
+    official_nodes: 3
+    # 本番のベンチは ECS Fargate (8vCPU / 8GB)(上流README)。AWSに 8vCPU / 8GiB のタイプは無いので、
+    # c5.2xlarge(8vCPU / 16GiB)を mem=8G で 8GiB に絞る。
     bench_instance_type: c5.2xlarge
+    bench_mem_gb: 8
     notes: "本番は3台構成。bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon13"
   - name: isucon14
     ami_pattern: "isucon14-*"
     owner_id: "839726181030"
     ssh_user: ubuntu
-    # 本番のベンチは ECS Fargate (8vCPU / 8GB)(上流README)。8vCPUを満たす最小の
-    # c5.2xlarge(8vCPU / 16GiB) にする。
+    # 本番の競技サーバーは c5.large が3台(上流README)。既定タイプのままで一致する。
+    official_nodes: 3
+    # 本番のベンチは ECS Fargate (8vCPU / 8GB)(上流README)。AWSに 8vCPU / 8GiB のタイプは無いので、
+    # c5.2xlarge(8vCPU / 16GiB)を mem=8G で 8GiB に絞る。
     bench_instance_type: c5.2xlarge
+    bench_mem_gb: 8
     # 手で打つ経路にはsupervisorがいないので、ISUXBENCH_TARGET ではなく
     # --addr と --target を引数で渡す。ベンチ側は :443 を自分で付けないため
     # ポートまで含めて渡すこと。
@@ -104,6 +168,8 @@ problems:
     ami_pattern: "catatsuy_private_isu_amd64_*"
     owner_id: "459514135530"
     ssh_user: ubuntu
+    # 本番(競技会)は無く、上流READMEの推奨が基準。1台で完結する。
+    official_nodes: 1
     instance_type: c7a.large
     # 上流のREADMEが「競技 c7a.large / ベンチ c7a.xlarge」を推奨している。
     # ベンチ側が先にCPU飽和するとスコアが負荷生成側の性能で頭打ちになるため、ベンチは1段上にする。

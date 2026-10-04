@@ -389,7 +389,7 @@ func TestUp_BenchNodeUsesItsOwnTypeAndRole(t *testing.T) {
 	e := &Engine{EC2: m}
 	nodes, err := e.Up(context.Background(), UpOptions{
 		Problem: testProblem(), AMIID: "ami-123", Nodes: 2, InstanceType: "c7a.large",
-		BenchInstanceType: "c7a.xlarge", TTL: time.Hour, KeyName: "isuenv",
+		Bench: &catalog.Spec{InstanceType: "c7a.xlarge"}, TTL: time.Hour, KeyName: "isuenv",
 		Now: time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
@@ -439,21 +439,124 @@ func TestBuildLaunches(t *testing.T) {
 	if len(withoutBench) != 3 {
 		t.Fatalf("expected 3 launches, got %+v", withoutBench)
 	}
-	withBench := buildLaunches(UpOptions{Nodes: 3, InstanceType: "c7a.large", BenchInstanceType: "c7a.2xlarge"})
+	withBench := buildLaunches(UpOptions{Nodes: 3, InstanceType: "c7a.large", Bench: &catalog.Spec{InstanceType: "c7a.2xlarge", MemGB: 8}})
 	if len(withBench) != 4 {
 		t.Fatalf("expected 4 launches, got %+v", withBench)
 	}
-	want := launch{index: 4, instanceType: "c7a.2xlarge", role: RoleBench}
+	want := launch{index: 4, spec: catalog.Spec{InstanceType: "c7a.2xlarge", MemGB: 8}, role: RoleBench}
 	if withBench[3] != want {
 		t.Errorf("bench launch = %+v, want %+v", withBench[3], want)
 	}
 
-	// ノードごとのタイプは1号機から順に使い、足りない番号は InstanceType になる。
-	perNode := buildLaunches(UpOptions{Nodes: 3, InstanceType: "c5.large", NodeInstanceTypes: []string{"c5.xlarge", "c5.2xlarge"}})
-	for i, wantType := range []string{"c5.xlarge", "c5.2xlarge", "c5.large"} {
-		if got := perNode[i]; got.index != i+1 || got.instanceType != wantType || got.role != RoleApp {
-			t.Errorf("launch %d = %+v, want index %d type %s", i, got, i+1, wantType)
+	// ノードごとのスペックは1号機から順に使い、足りない番号は InstanceType を制限なしで使う。
+	perNode := buildLaunches(UpOptions{Nodes: 3, InstanceType: "c5.large", NodeSpecs: []catalog.Spec{
+		{InstanceType: "c5.xlarge", MemGB: 1},
+		{InstanceType: "c5.2xlarge"},
+	}})
+	for i, wantLabel := range []string{"c5.xlarge(mem=1G)", "c5.2xlarge", "c5.large"} {
+		if got := perNode[i]; got.index != i+1 || got.spec.Label() != wantLabel || got.role != RoleApp {
+			t.Errorf("launch %d = %+v, want index %d spec %s", i, got, i+1, wantLabel)
 		}
+	}
+}
+
+// 制限のあるスペックは、CPUを RunInstances の CpuOptions で、メモリをuser-dataの mem= で絞る。
+// どちらもノードごとに違いうる(競技ノードとベンチノード、isucon10-final の各号機)ので、
+// 起動ごとに別の値が渡ることを確かめる。制限をタグに残すのは、後から list で表示するため。
+func TestUp_AppliesPerNodeLimits(t *testing.T) {
+	PollInterval = time.Millisecond
+	var runs []*ec2.RunInstancesInput
+	m := &awsapi.Mock{
+		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+			runs = append(runs, in)
+			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String("i-" + strconv.Itoa(len(runs)))}}}, nil
+		},
+		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+			if len(in.InstanceIds) == 0 {
+				return &ec2.DescribeInstancesOutput{}, nil
+			}
+			// 起動時に付けたタグをそのまま返す(実際のDescribeInstancesと同じ)。
+			var instances []ec2types.Instance
+			for i, run := range runs {
+				inst := runningInstance("i-"+strconv.Itoa(i+1), "isucon13", strconv.Itoa(i+1), "54.0.0.1", "10.100.0.11")
+				inst.InstanceType = run.InstanceType
+				inst.Tags = run.TagSpecifications[0].Tags
+				instances = append(instances, inst)
+			}
+			return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: instances}}}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	nodes, err := e.Up(context.Background(), UpOptions{
+		Problem: testProblem(), AMIID: "ami-123", Nodes: 3,
+		NodeSpecs: []catalog.Spec{
+			{InstanceType: "c5.large", CPUOptions: &catalog.CPUOptions{CoreCount: 1, ThreadsPerCore: 1}, MemGB: 2},
+			{InstanceType: "c5.large", MemGB: 1},
+			{InstanceType: "c5.large"},
+		},
+		Bench: &catalog.Spec{InstanceType: "c5.4xlarge", CPUOptions: &catalog.CPUOptions{CoreCount: 6, ThreadsPerCore: 2}},
+		TTL:   time.Hour, KeyName: "isuenv",
+		Now: time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs) != 4 {
+		t.Fatalf("expected 4 RunInstances calls, got %d", len(runs))
+	}
+	userData := func(run *ec2.RunInstancesInput) string {
+		ud, err := base64.StdEncoding.DecodeString(aws.ToString(run.UserData))
+		if err != nil {
+			t.Fatalf("user data is not base64: %v", err)
+		}
+		return string(ud)
+	}
+
+	// 1号機: CPUもメモリも絞る。
+	if c := runs[0].CpuOptions; c == nil || aws.ToInt32(c.CoreCount) != 1 || aws.ToInt32(c.ThreadsPerCore) != 1 {
+		t.Errorf("node 1 must be launched with CoreCount=1 ThreadsPerCore=1: %+v", c)
+	}
+	if ud := userData(runs[0]); !strings.Contains(ud, "mem=2G") {
+		t.Errorf("node 1 user data must apply mem=2G: %s", ud)
+	}
+	// 2号機: メモリだけ絞る。CpuOptions を付けるとタイプの既定から変わってしまうので付けない。
+	if runs[1].CpuOptions != nil {
+		t.Errorf("node 2 has no CPU limit, CpuOptions must be nil: %+v", runs[1].CpuOptions)
+	}
+	if ud := userData(runs[1]); !strings.Contains(ud, "mem=1G") || strings.Contains(ud, "mem=2G") {
+		t.Errorf("node 2 user data must apply its own mem=1G: %s", ud)
+	}
+	// 3号機: 制限なし。メモリ制限の処理(再起動)がuser-dataに入らないこと。
+	if runs[2].CpuOptions != nil {
+		t.Errorf("node 3 has no limits, CpuOptions must be nil: %+v", runs[2].CpuOptions)
+	}
+	if ud := userData(runs[2]); strings.Contains(ud, "mem=") || strings.Contains(ud, "shutdown -r") {
+		t.Errorf("node 3 user data must not touch memory or reboot: %s", ud)
+	}
+	if tags := runs[2].TagSpecifications[0].Tags; tagValue(tags, TagVCPUs) != "" || tagValue(tags, TagMemGB) != "" {
+		t.Errorf("node 3 must not carry limit tags: %+v", tags)
+	}
+	// ベンチ: 競技ノードとは別の CpuOptions。
+	if c := runs[3].CpuOptions; c == nil || aws.ToInt32(c.CoreCount) != 6 || aws.ToInt32(c.ThreadsPerCore) != 2 {
+		t.Errorf("bench must be launched with CoreCount=6 ThreadsPerCore=2: %+v", c)
+	}
+	if ud := userData(runs[3]); strings.Contains(ud, "mem=") {
+		t.Errorf("bench has no memory limit, user data must not apply mem=: %s", ud)
+	}
+	// どのノードもTTLの自己シャットダウンは持つ。
+	for i, run := range runs {
+		if ud := userData(run); !strings.Contains(ud, "/etc/cron.d/isuenv-ttl") {
+			t.Errorf("run %d: user data must keep the TTL cron: %s", i, ud)
+		}
+	}
+
+	// 制限はタグ経由でノードに復元される。
+	var got []string
+	for _, n := range nodes {
+		got = append(got, n.TypeLabel())
+	}
+	if joined := strings.Join(got, " "); joined != "c5.large(1vCPU,mem=2G) c5.large(mem=1G) c5.large c5.4xlarge(12vCPU)" {
+		t.Errorf("node labels = %q", joined)
 	}
 }
 
@@ -470,6 +573,17 @@ func TestEnvInstanceTypeSummary(t *testing.T) {
 			{InstanceType: "c7a.large", Role: RoleApp},
 			{InstanceType: "c7a.xlarge", Role: RoleBench},
 		}, "c7a.large +bench c7a.xlarge"},
+		// 起動時にかけた制限も並べる。メモリ制限はインスタンスの外から見えないので、ここに出ないと気づけない。
+		{"with limits", []Node{
+			{InstanceType: "c5.large", Role: RoleApp, LimitVCPUs: 1, LimitMemGB: 2},
+			{InstanceType: "c5.large", Role: RoleApp, LimitVCPUs: 1, LimitMemGB: 2},
+			{InstanceType: "r5.large", Role: RoleBench, LimitVCPUs: 1},
+		}, "c5.large(1vCPU,mem=2G) +bench r5.large(1vCPU)"},
+		{"per-node limits", []Node{
+			{InstanceType: "c5.large", Role: RoleApp, LimitMemGB: 1},
+			{InstanceType: "c5.large", Role: RoleApp, LimitMemGB: 2},
+			{InstanceType: "c5.xlarge", Role: RoleApp, LimitMemGB: 1},
+		}, "c5.large(mem=1G),c5.large(mem=2G),c5.xlarge(mem=1G)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

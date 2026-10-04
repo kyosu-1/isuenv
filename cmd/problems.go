@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -25,12 +26,17 @@ func init() {
 
 func renderProblems(w io.Writer) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSSH USER\tTYPE\tBENCH TYPE\tBENCH CMD\tNOTES")
+	fmt.Fprintln(tw, "NAME\tSSH USER\tNODES\tTYPE\tBENCH TYPE\tBENCH CMD\tNOTES")
 	for _, p := range catalog.List() {
-		// 推奨値のない問題は "-"。`up --bench` を使うには --bench-instance-type が要ることを示す。
+		// NODES は本番の競技サーバーの台数(`up --nodes` の既定値ではない)。
+		officialNodes := "-"
+		if p.OfficialNodes > 0 {
+			officialNodes = strconv.Itoa(p.OfficialNodes)
+		}
+		// カタログ値のない問題は "-"。`up --bench` を使うには --bench-instance-type が要ることを示す。
 		bench := "-"
-		if p.BenchInstanceType != "" {
-			bench = p.BenchInstanceType
+		if spec, ok := p.BenchSpec(); ok {
+			bench = spec.Label()
 		}
 		// BENCH CMD は `isuenv bench` でコマンドを出せるか。カタログにベンチの
 		// 起動方法が埋まっている問題だけ yes になる。埋まっていない問題は
@@ -39,12 +45,21 @@ func renderProblems(w io.Writer) {
 		if p.Bench != nil {
 			benchCmd = "yes"
 		}
-		// ノードごとの推奨値がある問題は、1号機から順に並べる(台数がそれより多いときの残りは既定タイプ)。
-		instanceType := p.InstanceType
-		if len(p.NodeInstanceTypes) > 0 {
-			instanceType = strings.Join(p.NodeInstanceTypes, ",")
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", p.Name, p.SSHUser, instanceType, bench, benchCmd, p.Notes)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", p.Name, p.SSHUser, officialNodes, typeColumn(p), bench, benchCmd, p.Notes)
 	}
 	tw.Flush()
+}
+
+// typeColumn は競技ノードの実効スペックを表す。タイプだけでは本番のスペックにならない問題は
+// `c5.large(1vCPU,mem=2G)` のように制限を添える。
+// ノードごとのスペックがある問題は、1号機から順に並べる(台数がそれより多いときの残りは既定スペック)。
+func typeColumn(p catalog.Problem) string {
+	if len(p.NodeSpecs) == 0 {
+		return p.DefaultSpec().Label()
+	}
+	labels := make([]string, 0, len(p.NodeSpecs))
+	for _, s := range p.NodeSpecs {
+		labels = append(labels, s.Label())
+	}
+	return strings.Join(labels, ",")
 }
