@@ -24,6 +24,11 @@ type Problem struct {
 	// InstanceType は問題ごとの推奨インスタンスタイプ。省略時は List() が DefaultInstanceType で埋めるため、
 	// List()/Lookup() の戻り値では常に非空。
 	InstanceType string `yaml:"instance_type"`
+	// NodeInstanceTypes は競技ノードごとの推奨インスタンスタイプ(1号機から順)。
+	// 本番で競技ノードのスペックが揃っていなかった問題にだけ設定する(根拠は catalog.yaml の
+	// 各問題のコメント)。空なら全ノードが InstanceType になる。
+	// 台数がこれより多いときの残りのノードも InstanceType になる。
+	NodeInstanceTypes []string `yaml:"node_instance_types"`
 	// BenchInstanceType はベンチマーカー専用ノードの推奨インスタンスタイプ。
 	// 上流が推奨タイプを明記していればそれを、本番のベンチのスペックだけが公開されていれば
 	// そのvCPUとメモリを満たす最小のタイプを設定する(根拠は catalog.yaml の各問題のコメント)。
@@ -97,6 +102,20 @@ func List() []Problem {
 		}
 	}
 	return f.Problems
+}
+
+// NodeTypes は競技ノード n 台それぞれのインスタンスタイプを1号機から順に返す。
+// NodeInstanceTypes に無い番号のノードは InstanceType になる。
+func (p Problem) NodeTypes(n int) []string {
+	types := make([]string, n)
+	for i := range types {
+		if i < len(p.NodeInstanceTypes) {
+			types[i] = p.NodeInstanceTypes[i]
+			continue
+		}
+		types[i] = p.InstanceType
+	}
+	return types
 }
 
 func Lookup(name string) (Problem, error) {

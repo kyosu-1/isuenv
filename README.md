@@ -10,7 +10,7 @@ ISUCON過去問と[private-isu](https://github.com/catatsuy/private-isu)の練�
 | `isucon9-qualify` | `c5.large` | `c7a.xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon9-qualify) |
 | `isucon9-final` | `c5.large` | - | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon9-final) |
 | `isucon10-qualify` | `c5.large` | `r5.large` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon10-qualify) |
-| `isucon10-final` | `c5.large` | `c5.2xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon10-final) |
+| `isucon10-final` | `c5.large` ×2、`c5.xlarge` | `c5.2xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon10-final) |
 | `isucon11-qualify` | `c5.large` | `c4.xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon11-qualify) |
 | `isucon11-final` | `c5.large` | `c5.xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon11-final) |
 | `isucon12-qualify` | `c5.large` | `c5.xlarge` | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon12-qualify) |
@@ -19,7 +19,7 @@ ISUCON過去問と[private-isu](https://github.com/catatsuy/private-isu)の練�
 | `isucon14` | `c5.large` | `c5.2xlarge` | 対応 | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon14) |
 | `private-isu` | `c7a.large` | `c7a.xlarge` | 対応 | [catatsuy/private-isu](https://github.com/catatsuy/private-isu#ami) |
 
-- **既定タイプ**: `isuenv up` で `--instance-type` を省略したときのインスタンスタイプ
+- **既定タイプ**: `isuenv up` で `--instance-type` を省略したときのインスタンスタイプ。本番で競技ノードのスペックが揃っていなかった問題は、1号機から順のタイプ
 - **ベンチ推奨タイプ**: `--bench` で追加されるベンチマーカー専用ノードのタイプ。`-` の問題は `--bench-instance-type` での明示指定が要る
 - **`isuenv bench`**: ベンチ実行コマンドをIPを埋めた状態で表示できるか。`-` の問題はリンク先の手順を読んで手で打つ
 
@@ -84,6 +84,7 @@ Ensuring network...
 | `--ttl` | `8h` | この時間が経過したら自動でterminateする（[挙動](#ttlの挙動)） |
 | `--nodes` | `1` | 起動台数。1以上 |
 | `--instance-type` | 問題ごと | EC2インスタンスタイプ。既定値は問題ごとに異なり、`isuenv problems` の TYPE 列で確認できる（ほとんどは `c5.large`、private-isuは推奨に合わせて `c7a.large`） |
+| `--node-instance-types` | 問題ごと | 競技ノードごとのインスタンスタイプを、1号機から順にカンマ区切りで指定する（[ノードごとのタイプ](#ノードごとのタイプ)）。`--instance-type` とは併用できない |
 | `--bench` | `false` | ベンチマーカー専用ノードを1台追加する。タイプは `isuenv problems` の BENCH TYPE 列の値（上流の推奨タイプ、または本番のベンチのスペックを満たす最小のタイプ）。推奨値の無い問題（isucon9-final）ではエラーになる |
 | `--bench-instance-type` | なし | ベンチマーカー専用ノードのインスタンスタイプを明示する。指定すると `--bench` は省略できる |
 
@@ -101,6 +102,25 @@ isuenv up isucon13 --ttl 2h30m    # 2時間30分
 ```
 Error: invalid argument "1d" for "--ttl" flag: time: unknown unit "d" in duration "1d"
 ```
+
+#### ノードごとのタイプ
+
+本番で競技ノードのスペックが揃っていなかった問題は、ノードごとの推奨タイプを持っている
+（`isuenv problems` の TYPE 列に1号機から順に並ぶ）。いまは isucon10-final だけで、
+本番の isu3 が4コアだったのに合わせて3号機が `c5.xlarge` になる。
+
+```sh
+isuenv up isucon10-final --nodes 3 --bench   # c5.large, c5.large, c5.xlarge + ベンチ c5.2xlarge（本番相当）
+isuenv up isucon10-final --nodes 3 --instance-type c5.large               # 全ノード c5.large
+isuenv up isucon13 --nodes 3 --node-instance-types c5.xlarge,c5.large     # 1号機だけ c5.xlarge
+```
+
+- `--instance-type` は全ノードを同じタイプにする指定で、問題ごとの推奨値より優先する
+- `--node-instance-types` で指定が足りない番号のノードと、推奨値より多い台数の残りのノードは、問題の既定タイプになる
+- 競技ノードのタイプが揃っていない構成では、`up` の結果にタイプとロールが並ぶ
+
+isucon10-final のメモリの差（本番は isu2 だけ 2GiB）は再現しない。AMIの `contestant.slice` が
+全ノードで envoy・MySQL・アプリの合計を 1200M に制限していて、インスタンスタイプでは変わらないため。
 
 #### ベンチマーカー専用ノード
 
@@ -191,7 +211,7 @@ isuenv管理下の**全リソース**を削除する。`yes` の入力を求め�
 
 ### `isuenv problems`
 
-対応している問題と、SSHユーザー、既定のインスタンスタイプ、ベンチマーカー専用ノードの推奨タイプ
+対応している問題と、SSHユーザー、既定のインスタンスタイプ（ノードごとの推奨値がある問題は1号機から順）、ベンチマーカー専用ノードの推奨タイプ
 （BENCH TYPE。推奨値の無い問題は `-`）、`isuenv bench` が使えるか（BENCH CMD）、ベンチ手順へのリンクを一覧する。
 
 ## TTLの挙動

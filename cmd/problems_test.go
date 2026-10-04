@@ -40,6 +40,24 @@ func TestRenderProblemsBenchTypeColumn(t *testing.T) {
 	}
 }
 
+// TYPE 列は、ノードごとの推奨値がある問題では1号機から順に全部並べる。
+func TestRenderProblemsNodeTypesColumn(t *testing.T) {
+	var buf bytes.Buffer
+	renderProblems(&buf)
+	types := map[string]string{}
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if fields := strings.Fields(line); len(fields) >= 3 {
+			types[fields[0]] = fields[2]
+		}
+	}
+	if got := types["isucon10-final"]; got != "c5.large,c5.large,c5.xlarge" {
+		t.Errorf("isucon10-final type = %q, want c5.large,c5.large,c5.xlarge", got)
+	}
+	if got := types["isucon13"]; got != "c5.large" {
+		t.Errorf("isucon13 type = %q, want c5.large", got)
+	}
+}
+
 // BENCH CMD 列は `isuenv bench` が使えるかを示す。カタログにベンチの起動方法が
 // 埋まっている問題だけ yes になり、それ以外は NOTES のリンクを読む必要がある。
 func TestRenderProblemsBenchCmdColumn(t *testing.T) {
@@ -65,7 +83,7 @@ func TestRenderProblemsBenchCmdColumn(t *testing.T) {
 // 1台でも混じると `isuenv list` の EST COST が "-" になり、課金の目安が見えなくなる。
 func TestCatalogInstanceTypesHavePrices(t *testing.T) {
 	for _, p := range catalog.List() {
-		for _, typ := range []string{p.InstanceType, p.BenchInstanceType} {
+		for _, typ := range append([]string{p.InstanceType, p.BenchInstanceType}, p.NodeInstanceTypes...) {
 			if typ == "" {
 				continue
 			}

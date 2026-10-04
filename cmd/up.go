@@ -18,6 +18,7 @@ var (
 	upNodes             int
 	upTTL               time.Duration
 	upInstanceType      string
+	upNodeInstanceTypes []string
 	upBench             bool
 	upBenchInstanceType string
 )
@@ -60,17 +61,20 @@ var upCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		instanceType := resolveInstanceType(upInstanceType, p)
+		nodeTypes, err := resolveNodeInstanceTypes(upNodes, upInstanceType, upNodeInstanceTypes, p)
+		if err != nil {
+			return err
+		}
 		benchInstanceType, err := resolveBenchInstanceType(upBench, upBenchInstanceType, p)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Launching %d node(s) of %s (%s, TTL %s)...\n", upNodes, p.Name, instanceType, upTTL)
+		fmt.Printf("Launching %d node(s) of %s (%s, TTL %s)...\n", upNodes, p.Name, describeNodeTypes(nodeTypes), upTTL)
 		if benchInstanceType != "" {
 			fmt.Printf("  plus 1 bench node (%s)\n", benchInstanceType)
 		}
 		nodes, err := e.Up(ctx, engine.UpOptions{
-			Problem: p, AMIID: ami.ID, Nodes: upNodes, InstanceType: instanceType,
+			Problem: p, AMIID: ami.ID, Nodes: upNodes, NodeInstanceTypes: nodeTypes,
 			BenchInstanceType: benchInstanceType,
 			TTL:               upTTL, KeyName: key, Net: net, Now: time.Now(),
 		})
@@ -102,13 +106,52 @@ func resolvedAMILine(a engine.AMI) string {
 	return fmt.Sprintf("  -> %s (%s)", a.ID, a.Name)
 }
 
-// resolveInstanceType は --instance-type の明示指定を優先し、未指定(空)なら問題ごとの推奨値を使う。
-// 推奨値は問題によって異なる(private-isuはc7a.large)ため、フラグの既定値には持たせられない。
-func resolveInstanceType(flagValue string, p catalog.Problem) string {
-	if flagValue != "" {
-		return flagValue
+// resolveNodeInstanceTypes は競技ノード nodes 台それぞれのインスタンスタイプを1号機から順に決める。
+// 優先順は --node-instance-types、--instance-type、問題ごとの推奨値。
+// 推奨値は問題によって異なる(private-isuはc7a.large、isucon10-finalは3号機だけc5.xlarge)ため、
+// フラグの既定値には持たせられない。
+// --instance-type は全ノードを同じタイプにする指定なので、問題がノードごとの推奨値を持っていても上書きする。
+// --node-instance-types で足りない番号のノードは問題の既定タイプになる。
+func resolveNodeInstanceTypes(nodes int, flagType string, flagNodeTypes []string, p catalog.Problem) ([]string, error) {
+	if flagType != "" && len(flagNodeTypes) > 0 {
+		return nil, fmt.Errorf("--instance-type and --node-instance-types cannot be used together")
 	}
-	return p.InstanceType
+	if len(flagNodeTypes) > nodes {
+		return nil, fmt.Errorf("--node-instance-types has %d types but --nodes is %d", len(flagNodeTypes), nodes)
+	}
+	for i, t := range flagNodeTypes {
+		if strings.TrimSpace(t) == "" {
+			return nil, fmt.Errorf("--node-instance-types has an empty type at position %d", i+1)
+		}
+	}
+	if flagType != "" {
+		p = catalog.Problem{InstanceType: flagType}
+	}
+	if len(flagNodeTypes) > 0 {
+		p = catalog.Problem{InstanceType: p.InstanceType, NodeInstanceTypes: flagNodeTypes}
+	}
+	return p.NodeTypes(nodes), nil
+}
+
+// describeNodeTypes は競技ノードのタイプを起動時の1行に載せる形にする。
+// 全ノード同じなら1つだけ、違うなら1号機から順に全部並べる。
+func describeNodeTypes(types []string) string {
+	if !mixedTypes(types) {
+		if len(types) == 0 {
+			return ""
+		}
+		return types[0]
+	}
+	return strings.Join(types, ",")
+}
+
+func mixedTypes(types []string) bool {
+	for _, t := range types {
+		if t != types[0] {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveBenchInstanceType はベンチマーカー専用ノードのインスタンスタイプを決める。
@@ -129,16 +172,19 @@ func resolveBenchInstanceType(bench bool, flagValue string, p catalog.Problem) (
 }
 
 // formatNodeLines は up の結果表示の行を組み立てる。
-// ベンチノードがある構成でだけタイプとロールの列を足す(どれがベンチかを判別できるようにするため)。
+// ベンチノードがある構成と、競技ノードのタイプが揃っていない構成でだけタイプとロールの列を足す
+// (どれがベンチか、どのノードが大きいかを判別できるようにするため)。
 // 先頭の列はsshのホスト名そのものなので、ロール表示時は `(ssh ...)` の案内を省いて横幅を詰める。
 func formatNodeLines(name string, nodes []engine.Node) []string {
 	hasBench := false
+	types := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		if n.Role == engine.RoleBench {
 			hasBench = true
 		}
+		types = append(types, n.InstanceType)
 	}
-	if !hasBench {
+	if !hasBench && !mixedTypes(types) {
 		lines := make([]string, 0, len(nodes))
 		for _, n := range nodes {
 			lines = append(lines, fmt.Sprintf("  %s-%d  public %s  private %s  (ssh %s-%d)", name, n.Index, n.PublicIP, n.PrivateIP, name, n.Index))
@@ -163,6 +209,7 @@ func init() {
 	upCmd.Flags().DurationVar(&upTTL, "ttl", 8*time.Hour, "auto-terminate after this duration")
 	// 説明文のバックティックはcobraが引数プレースホルダ名として解釈するため使わない。
 	upCmd.Flags().StringVar(&upInstanceType, "instance-type", "", "EC2 instance type (default: per-problem, see 'isuenv problems')")
+	upCmd.Flags().StringSliceVar(&upNodeInstanceTypes, "node-instance-types", nil, "comma-separated EC2 instance types per node, from node 1 (default: per-problem)")
 	upCmd.Flags().BoolVar(&upBench, "bench", false, "add one benchmarker node using the per-problem bench instance type")
 	upCmd.Flags().StringVar(&upBenchInstanceType, "bench-instance-type", "", "EC2 instance type for the benchmarker node (implies --bench)")
 	rootCmd.AddCommand(upCmd)

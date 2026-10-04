@@ -8,14 +8,62 @@ import (
 	"github.com/kyosu-1/isuenv/internal/engine"
 )
 
-func TestResolveInstanceType(t *testing.T) {
-	p := catalog.Problem{Name: "private-isu", InstanceType: "c7a.large"}
-
-	if got := resolveInstanceType("", p); got != "c7a.large" {
-		t.Errorf("unset flag should fall back to the problem default: got %q", got)
+func TestResolveNodeInstanceTypes(t *testing.T) {
+	privateISU := catalog.Problem{Name: "private-isu", InstanceType: "c7a.large"}
+	// 本番で競技ノードのスペックが揃っていなかった問題。3号機だけ大きい。
+	isucon10Final := catalog.Problem{
+		Name: "isucon10-final", InstanceType: "c5.large",
+		NodeInstanceTypes: []string{"c5.large", "c5.large", "c5.xlarge"},
 	}
-	if got := resolveInstanceType("c5.large", p); got != "c5.large" {
-		t.Errorf("explicit flag should win: got %q", got)
+
+	tests := []struct {
+		name      string
+		nodes     int
+		flagType  string
+		flagNodes []string
+		problem   catalog.Problem
+		want      string
+	}{
+		{"unset flags fall back to the problem default", 2, "", nil, privateISU, "c7a.large,c7a.large"},
+		{"explicit --instance-type wins", 2, "c5.large", nil, privateISU, "c5.large,c5.large"},
+		{"per-node catalog values are used in node order", 3, "", nil, isucon10Final, "c5.large,c5.large,c5.xlarge"},
+		{"fewer nodes take the first catalog values", 1, "", nil, isucon10Final, "c5.large"},
+		{"nodes beyond the catalog list use the default type", 4, "", nil, isucon10Final, "c5.large,c5.large,c5.xlarge,c5.large"},
+		// 全ノードを同じタイプにする指定なので、ノードごとの推奨値より優先する。
+		{"--instance-type overrides per-node catalog values", 3, "c7a.large", nil, isucon10Final, "c7a.large,c7a.large,c7a.large"},
+		{"--node-instance-types wins over the catalog", 3, "", []string{"c5.xlarge", "c5.large", "c5.large"}, isucon10Final, "c5.xlarge,c5.large,c5.large"},
+		{"missing --node-instance-types entries use the default type", 3, "", []string{"c5.xlarge"}, isucon10Final, "c5.xlarge,c5.large,c5.large"},
+	}
+	for _, tt := range tests {
+		got, err := resolveNodeInstanceTypes(tt.nodes, tt.flagType, tt.flagNodes, tt.problem)
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", tt.name, err)
+			continue
+		}
+		if joined := strings.Join(got, ","); joined != tt.want {
+			t.Errorf("%s: got %q, want %q", tt.name, joined, tt.want)
+		}
+	}
+
+	// どちらを優先するか曖昧な組み合わせは、黙って片方を捨てずにエラーにする。
+	if _, err := resolveNodeInstanceTypes(3, "c5.large", []string{"c5.xlarge"}, isucon10Final); err == nil {
+		t.Error("--instance-type with --node-instance-types should be rejected")
+	}
+	// 台数より多いタイプは起動されないノードの指定なので、打ち間違いとして扱う。
+	if _, err := resolveNodeInstanceTypes(2, "", []string{"c5.large", "c5.large", "c5.xlarge"}, isucon10Final); err == nil || !strings.Contains(err.Error(), "--nodes") {
+		t.Errorf("more types than nodes should be rejected with a hint about --nodes: %v", err)
+	}
+	if _, err := resolveNodeInstanceTypes(2, "", []string{"c5.large", ""}, isucon10Final); err == nil {
+		t.Error("an empty type in --node-instance-types should be rejected")
+	}
+}
+
+func TestDescribeNodeTypes(t *testing.T) {
+	if got := describeNodeTypes([]string{"c5.large", "c5.large"}); got != "c5.large" {
+		t.Errorf("uniform types should be printed once: got %q", got)
+	}
+	if got := describeNodeTypes([]string{"c5.large", "c5.large", "c5.xlarge"}); got != "c5.large,c5.large,c5.xlarge" {
+		t.Errorf("mixed types should be listed in node order: got %q", got)
 	}
 }
 
@@ -76,6 +124,19 @@ func TestFormatNodeLines(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("line %d:\n got %q\nwant %q", i, got[i], want[i])
 		}
+	}
+
+	// 競技ノードのタイプが揃っていない構成では、ベンチノードが無くてもタイプを示す。
+	uneven := []engine.Node{
+		{Index: 1, PublicIP: "1.2.3.4", PrivateIP: "10.100.0.1", InstanceType: "c5.large", Role: engine.RoleApp},
+		{Index: 2, PublicIP: "5.6.7.8", PrivateIP: "10.100.0.2", InstanceType: "c5.xlarge", Role: engine.RoleApp},
+	}
+	unevenLines := formatNodeLines("isucon10-final", uneven)
+	if len(unevenLines) != 2 {
+		t.Fatalf("got %d lines, want 2: %q", len(unevenLines), unevenLines)
+	}
+	if !strings.Contains(unevenLines[0], "c5.large") || !strings.Contains(unevenLines[1], "c5.xlarge") {
+		t.Errorf("nodes of different types should show their types: %q", unevenLines)
 	}
 
 	// ベンチノードがあるときは、どれがベンチかをタイプとロールの列で示す。
