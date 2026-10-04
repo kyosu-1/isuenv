@@ -14,7 +14,7 @@ import (
 // 実行されないため、リブートされた練習環境は永久に動き続けてしまう。そこで絶対時刻を
 // /var/lib/isuenv-expires-at に書き込み、cron.dで毎分チェックする方式にすることでリブート耐性を持たせる。
 //
-// memGB が正なら、続けてカーネル引数 mem=<memGB>G でメモリを絞る処理(memLimitScript)を足す。
+// memGB が正なら、続けてカーネル引数 mem= でOSから見えるメモリを約 memGB GiB に絞る処理(memLimitScript)を足す。
 // TTLの設定を先に書くので、メモリ制限の適用(再起動を伴う)がどう転んでも自己消滅は効く。
 func BuildUserData(expiresAt time.Time, memGB int) string {
 	epoch := expiresAt.Unix()
@@ -26,11 +26,22 @@ CRON
 `, epoch)
 	if memGB > 0 {
 		script += strings.NewReplacer(
-			"@MEM@", fmt.Sprintf("%dG", memGB),
+			"@MEM@", fmt.Sprintf("%dG", memKernelArgGB(memGB)),
 			"@MEM_KB@", fmt.Sprintf("%d", memGB*1024*1024),
 		).Replace(memLimitScript)
 	}
 	return script
+}
+
+// memKernelArgGB は、OSから見えるメモリを memGB にするためにカーネル引数 mem= へ渡す値を返す。
+// mem= は「使う物理アドレスの上限」で、EC2(Nitro)のメモリは 0〜3GiB と 4GiB 以降に分かれて
+// 載っている(3〜4GiB はデバイス用の穴)。上限が 3GiB を超えると穴の 1GiB ぶん使える量が減るので、
+// その分を足す。実機: c5.2xlarge で mem=8G だと free は 6924MB、c5.large で mem=2G は 1913MB。
+func memKernelArgGB(memGB int) int {
+	if memGB > 3 {
+		return memGB + 1
+	}
+	return memGB
 }
 
 // memLimitScript はカーネル引数 mem= でOSから見えるメモリを絞る。上流の provisioning が

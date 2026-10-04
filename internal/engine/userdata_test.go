@@ -71,7 +71,7 @@ func TestBuildUserDataMemLimit(t *testing.T) {
 		t.Errorf("only the TTL cron may power off the instance: %q", ud)
 	}
 
-	if other := BuildUserData(expiresAt, 8); !strings.Contains(other, "ISUENV_MEM=8G") || !strings.Contains(other, "-le 8388608 ]") || strings.Contains(other, "2G") {
+	if other := BuildUserData(expiresAt, 8); !strings.Contains(other, "ISUENV_MEM=9G") || !strings.Contains(other, "-le 8388608 ]") || strings.Contains(other, "2G") {
 		t.Errorf("memory size must follow the argument: %q", other)
 	}
 }
