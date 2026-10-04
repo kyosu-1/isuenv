@@ -24,7 +24,7 @@ func TestBuildUserData(t *testing.T) {
 		t.Errorf("expected absolute-deadline shutdown (reboot-safe): %q", ud)
 	}
 	// メモリ制限が無ければ grub にも触らず、再起動もしない。
-	for _, unwanted := range []string{"mem=", "update-grub", "shutdown -r"} {
+	for _, unwanted := range []string{"mem=", "update-grub", "grub2-mkconfig", "shutdown -r"} {
 		if strings.Contains(ud, unwanted) {
 			t.Errorf("user data without a memory limit must not contain %q: %q", unwanted, ud)
 		}
@@ -51,6 +51,11 @@ func TestBuildUserDataMemLimit(t *testing.T) {
 		"/etc/default/grub.d/zz-isuenv-mem.cfg",
 		`sed -E 's/(^| +)mem=[^ ]*//g') mem=2G"`,
 		"update-grub",
+		// RHEL系(CentOS 7 の isucon8-qualify)は grub.d を読まないので、/etc/default/grub に足して
+		// grub2-mkconfig で反映する。
+		"cat <<'GRUB' >> /etc/default/grub\n",
+		`GRUB_CMDLINE_LINUX="$(printf '%s' "$GRUB_CMDLINE_LINUX" | sed -E 's/(^| +)mem=[^ ]*//g') mem=2G"`,
+		"grub2-mkconfig -o /boot/grub2/grub.cfg",
 		// 既に同じ値で起動していれば何もしない(AMIが焼き込み済みの場合と、再起動後の再実行)。
 		`grep -Eq "(^| )mem=${ISUENV_MEM}( |\$)" /proc/cmdline`,
 		// 搭載メモリが制限値(2GiB = 2097152kB)以下なら、絞るものが無いので再起動しない。

@@ -7,6 +7,9 @@ ISUCON過去問と[private-isu](https://github.com/catatsuy/private-isu)の練�
 
 | 問題名 | 本番の台数 | 競技ノード | ベンチノード | `isuenv bench` | AMI・ベンチ手順 |
 | --- | --- | --- | --- | --- | --- |
+| `isucon6-qualify` | 1 | `m5.large`（メモリ 7GiB に制限） | `c5.large` | 対応 | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon6-qualify) |
+| `isucon7-qualify` | 3 | `c5.large`（1 vCPU / 1GiB に制限） | -（非公開） | 対応 | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon7-qualify) |
+| `isucon8-qualify` | 3 | `c5.large`（メモリ 1GiB に制限） | `c5.large`（メモリ 1GiB に制限） | 対応 | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon8-qualify) |
 | `isucon9-qualify` | 3 | `c5.large` | `c5.4xlarge`（12 vCPU に制限） | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon9-qualify) |
 | `isucon9-final` | 3 | `c5.large`（メモリ 1GiB に制限） | -（非公開） | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon9-final) |
 | `isucon10-qualify` | 3 | `c5.large`（1 vCPU / 2GiB に制限） | `r5.large`（1 vCPU に制限） | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon10-qualify) |
@@ -28,6 +31,8 @@ ISUCON過去問と[private-isu](https://github.com/catatsuy/private-isu)の練�
 - **`isuenv bench`**: ベンチ実行コマンドをIPを埋めた状態で表示できるか。`-` の問題はリンク先の手順を読んで手で打つ
 
 手元のバージョンでの最新の一覧は `isuenv problems` で確認できる。
+
+isucon6〜8 の予選はAMIが古く（2021年のビルド）、ほかの問題と違う点がある。使う前に[古いAMIの注意点](#古いamiの注意点)を読むこと。
 
 ## インストール
 
@@ -89,7 +94,7 @@ Ensuring network...
 | `--nodes` | `1` | 起動台数。1以上 |
 | `--instance-type` | 問題ごと | 全競技ノードのEC2インスタンスタイプ。既定値は問題ごとに異なり、`isuenv problems` の TYPE 列で確認できる（ほとんどは `c5.large`、private-isuは推奨に合わせて `c7a.large`）。指定するとその問題のCPU制限は外れる（[タイプを指定したとき](#タイプを指定したとき)） |
 | `--node-instance-types` | 問題ごと | 競技ノードごとのインスタンスタイプを、1号機から順にカンマ区切りで指定する（[ノードごとのスペック](#ノードごとのスペック)）。`--instance-type` とは併用できない |
-| `--bench` | `false` | ベンチマーカー専用ノードを1台追加する。スペックは `isuenv problems` の BENCH TYPE 列の値（上流の推奨タイプ、または本番のベンチのスペック）。本番のベンチのスペックが非公開の問題（isucon9-final）ではエラーになる |
+| `--bench` | `false` | ベンチマーカー専用ノードを1台追加する。スペックは `isuenv problems` の BENCH TYPE 列の値（上流の推奨タイプ、または本番のベンチのスペック）。本番のベンチのスペックが非公開の問題（isucon7-qualify、isucon9-final）ではエラーになる |
 | `--bench-instance-type` | なし | ベンチマーカー専用ノードのインスタンスタイプを明示する。指定すると `--bench` は省略できる。その問題のベンチのCPU制限は外れる |
 | `--no-limits` | `false` | 公式スペックに合わせるためのCPU・メモリの制限を全て外し、インスタンスタイプそのままで起動する |
 
@@ -120,7 +125,8 @@ Error: invalid argument "1d" for "--ttl" flag: time: unknown unit "d" in duratio
 | メモリ | カーネル引数 `mem=<N>G`。上流の provisioning が本番で使っていたのと同じ方法 | isucon11-final の競技ノード: `mem=2G`<br>isucon13 / isucon14 のベンチ: `mem=8G` |
 
 メモリを絞るノードは、**起動直後に1回だけ自動で再起動する**（カーネル引数は起動時にしか効かないため。
-user-dataが `/etc/default/grub.d/zz-isuenv-mem.cfg` を書いて `update-grub` し、再起動する）。
+user-dataが `/etc/default/grub.d/zz-isuenv-mem.cfg` を書いて `update-grub` し、再起動する。
+CentOS 7 の isucon8-qualify では `/etc/default/grub` に足して `grub2-mkconfig` する）。
 `up` が結果を表示した直後の1〜2分は、sshがつながらなかったり途中で切れたりすることがある。
 IPは変わらないので、少し待ってつなぎ直せばよい。
 
@@ -152,7 +158,32 @@ free -m            # mem=2G なら total は約1.9GB（カーネルが予約す�
 - 再起動は1回だけ。何かの理由で制限が効かなくても、再起動を繰り返すことはない（その場合は制限なしで動き続ける）
 - TTLによる自動terminateは、この再起動の前に仕込まれる。再起動しても期限は維持される（[TTLの挙動](#ttlの挙動)）
 - isucon10 の「1コア」「2コア」が物理コアを指すのか論理スレッドを指すのかは、公開情報からは断定できない。isuenvはvCPU数（スレッド数）として再現する
-- 本番のスペックが公開されていないもの（isucon9-final のベンチ、isucon9-qualify のベンチのメモリ）は、推測で埋めずに未設定のままにしている
+- 本番のスペックが公開されていないもの（isucon7-qualify と isucon9-final のベンチ、isucon9-qualify のベンチのメモリ）は、推測で埋めずに未設定のままにしている
+
+#### 古いAMIの注意点
+
+isucon6-qualify・isucon7-qualify・isucon8-qualify は、上流のAMIが2021年4月のビルドのまま更新されていない。
+起動・TTL・CPUとメモリの制限・ベンチの完走は実機で確認してあるが、次の点がほかの問題と違う。
+
+| 問題 | OS | SSHユーザー | 既定で動いている実装 | 初期状態のベンチ（本番スペック） |
+| --- | --- | --- | --- | --- |
+| `isucon6-qualify` | Ubuntu 16.04 | `ubuntu` | Perl | pass、スコア 0（公式のレギュレーションに「初期スコアが0」とある） |
+| `isucon7-qualify` | Ubuntu 16.04 | `ubuntu` | Python | pass（1号機で自分自身に打って 5,000点台） |
+| `isucon8-qualify` | CentOS 7 | `centos` | Perl | **fail**（下記）。Go実装に切り替えると pass（1,100〜1,300点台） |
+
+- どれもOSのサポートが切れている。パッケージの追加や更新（`apt` / `yum`）は、そのままでは通らないことがある
+- **isucon8-qualify は、既定のPerl実装のままだと本番スペック（メモリ 1GiB）でベンチが通らない。**
+  売上レポート（`/admin/api/reports/sales`）でワーカーが 400MB 前後まで膨らみ、AMIにスワップが無いので OOM になる
+  （ノードが数分応答しなくなることもある）。次のどれかで避けられる
+  - 実装を切り替える。Go実装なら 1GiB・スワップ無しのまま通る: `sudo systemctl stop torb.perl && sudo systemctl disable torb.perl && sudo systemctl start torb.go && sudo systemctl enable torb.go`
+  - `isuenv up isucon8-qualify --no-limits` でメモリを絞らずに立てる（`c5.large` の 4GiB）
+  - スワップを足す。ただしPerl実装は膨らんだワーカーが残るので、2回目のベンチは通らなかった
+- isucon8-qualify は `/home/isucon` が `isucon` ユーザーにしか読めない。`centos` で入ったら `sudo -i -u isucon` で切り替える
+- isucon7-qualify の本番の初期構成は Web 2台 + DB 1台だが、AMIは1台完結のイメージ。`--nodes 3` で立てると、
+  3台とも同じ1台完結の状態で起動する（Web と DB を分ける設定は自分でする）
+
+上流には isucon5-qualify のAMIもあるが、対応していない。AMIに本番データが入っておらず
+（開発用の6ユーザーだけで、ベンチのテストセットと合わない）、既定のRuby実装もDBクエリが全て例外になり、ベンチが通らないため。
 
 #### タイプを指定したとき
 
@@ -279,7 +310,8 @@ isuenv bench isucon14 >> Makefile           # Makefileに取り込む
 ```
 
 対応している問題は `isuenv problems` の BENCH CMD 列が `yes` のものだけ。
-起動方法は実機で確認しないと確定できないため、検証できた問題から順に埋めている（現在は isucon14 と private-isu）。
+起動方法は実機で確認しないと確定できないため、検証できた問題から順に埋めている
+（現在は isucon6-qualify、isucon7-qualify、isucon8-qualify、isucon14、private-isu）。
 未対応の問題では、NOTESのリンク先を見るよう促すエラーになる。
 
 ### `isuenv down <問題名>`
@@ -345,6 +377,7 @@ VPC・サブネット・IGW・SG・キーペアは**無料**なので、`down` �
 ## コストの目安
 
 ap-northeast-1のオンデマンド概算で、c5.large（多くの問題の既定）が約$0.107/時、
+m5.large（isucon6-qualifyの既定）が約$0.124/時、
 c7a.large（private-isuの既定）が約$0.129/時、c7a.xlarge（private-isuのベンチ用）が約$0.258/時。
 ベンチノードで大きいのは c5.2xlarge（isucon10-final / isucon13 / isucon14）の約$0.428/時と、
 c5.4xlarge（isucon9-qualify）の約$0.856/時。CPUやメモリを絞っても単価は元のタイプのまま変わらない。
@@ -368,6 +401,8 @@ c5.4xlarge（isucon9-qualify）の約$0.856/時。CPUやメモリを絞っても
 
 **CPU・メモリの制限は実機でしか検証できない。** カタログの `cpu_options` / `mem_gb` や、user-dataのメモリ制限の処理を変えたときは以下を実施する。
 AMIによってgrubの構成が違いうるので、`mem_gb` を新しく設定した問題はその問題のAMIで確認すること。
+isucon8-qualify（CentOS 7）だけは grub の更新が別経路（`/etc/default/grub` + `grub2-mkconfig`）なので、
+メモリ制限の処理を変えたときは isucon8-qualify でも同じ確認をする（`ssh` のユーザーが `centos` になることも合わせて見る）。
 
 1. `./isuenv up isucon10-qualify --bench --ttl 1h` — 起動時の表示が `c5.large(1vCPU,mem=2G)` と `r5.large(1vCPU)` で、再起動の案内が出ること
 2. 1〜2分待ってから `./isuenv ssh isucon10-qualify` — 再起動後にログインできること（IPが変わっていないこと）

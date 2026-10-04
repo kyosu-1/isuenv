@@ -43,6 +43,9 @@ func TestOfficialSpecs(t *testing.T) {
 		bench string // 空はベンチのスペックが非公開
 	}
 	wants := map[string]want{
+		"isucon6-qualify":  {1, "m5.large(mem=7G)", "c5.large"},
+		"isucon7-qualify":  {3, "c5.large(1vCPU,mem=1G)", ""},
+		"isucon8-qualify":  {3, "c5.large(mem=1G)", "c5.large(mem=1G)"},
 		"isucon9-qualify":  {3, "c5.large", "c5.4xlarge(12vCPU)"},
 		"isucon9-final":    {3, "c5.large(mem=1G)", ""},
 		"isucon10-qualify": {3, "c5.large(1vCPU,mem=2G)", "r5.large(1vCPU)"},
@@ -101,6 +104,7 @@ func TestCatalogLimitsAreValidForInstanceType(t *testing.T) {
 		"c5.4xlarge": {[]int32{2, 4, 6, 8}, []int32{1, 2}, 32768},
 		"c7a.large":  {[]int32{1, 2}, []int32{1}, 4096},
 		"c7a.xlarge": {[]int32{1, 2, 3, 4}, []int32{1}, 8192},
+		"m5.large":   {[]int32{1}, []int32{1, 2}, 8192},
 		"r5.large":   {[]int32{1}, []int32{1, 2}, 16384},
 	}
 	contains := func(list []int32, v int32) bool {
@@ -253,9 +257,13 @@ func TestLookupPrivateISU(t *testing.T) {
 
 // ベンチ用タイプは根拠がある問題にだけ設定する。根拠は上流が明記した推奨タイプか、
 // 本番のベンチのスペック(CPU・メモリの制限と合わせて再現できるタイプにする。制限は TestOfficialSpecs)。
-// 無根拠な既定値を配らないため、スペックが公開されていない isucon9-final は空のままであることを確かめる。
+// 無根拠な既定値を配らないため、スペックが公開されていない isucon7-qualify と isucon9-final は
+// 空のままであることを確かめる。
 func TestBenchInstanceTypeOnlyWhereRecommended(t *testing.T) {
 	want := map[string]string{
+		"isucon6-qualify":  "c5.large",
+		"isucon7-qualify":  "",
+		"isucon8-qualify":  "c5.large",
 		"isucon9-qualify":  "c5.4xlarge",
 		"isucon9-final":    "",
 		"isucon10-qualify": "r5.large",
@@ -280,11 +288,15 @@ func TestBenchInstanceTypeOnlyWhereRecommended(t *testing.T) {
 	}
 }
 
-// ベンチの起動方法を持つ問題は Bench が非nil。v1で埋めるのは isucon14 と private-isu の2問。
-// 「ベンチノードあり(isucon14)」と「専用ベンチバイナリ(private-isu)」の両パターンを踏むことで
-// カタログの形が正しいかを検証できる。
+// ベンチの起動方法を持つ問題は Bench が非nil。実機でベンチが完走するところまで確認できた問題だけを載せる。
 func TestProblemsWithBench(t *testing.T) {
-	want := map[string]bool{"isucon14": true, "private-isu": true}
+	want := map[string]bool{
+		"isucon6-qualify": true,
+		"isucon7-qualify": true,
+		"isucon8-qualify": true,
+		"isucon14":        true,
+		"private-isu":     true,
+	}
 	for _, p := range List() {
 		if p.Bench == nil {
 			if want[p.Name] {
@@ -365,5 +377,31 @@ func TestIsucon14BenchArgs(t *testing.T) {
 	// cobra が余分な位置引数を黙って捨てているだけ。カタログには持ち込まない。
 	if strings.Contains(joined, "run . run") {
 		t.Error("args should not carry the stray positional args from matsuu's README")
+	}
+}
+
+// isucon8-qualify のAMIは /home/isucon が 700 で、sshユーザー(centos)からは cd できない。
+// workdir を使うと `cd ... &&` がsshユーザーで実行されて失敗するので、絶対パスだけで組み立てる。
+func TestIsucon8QualifyBenchUsesAbsolutePaths(t *testing.T) {
+	p, err := Lookup("isucon8-qualify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.SSHUser != "centos" {
+		t.Errorf("ssh user = %q, want centos", p.SSHUser)
+	}
+	if p.Bench.Workdir != "" {
+		t.Errorf("workdir = %q, want empty", p.Bench.Workdir)
+	}
+	if !strings.HasPrefix(p.Bench.Command, "/") {
+		t.Errorf("command %q should be an absolute path", p.Bench.Command)
+	}
+	got, err := p.Bench.RenderArgs(BenchVars{TargetIP: "10.100.0.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "-data /home/isucon/torb/bench/data -remotes 10.100.0.5 -output /home/isucon/torb/bench/result.json"
+	if joined := strings.Join(got, " "); joined != want {
+		t.Errorf("args = %q, want %q", joined, want)
 	}
 }
