@@ -33,6 +33,32 @@ func TestListDefaultsInstanceType(t *testing.T) {
 	}
 }
 
+// ノードごとの推奨タイプは、本番で競技ノードのスペックが揃っていなかった問題にだけ設定する。
+// isucon10-final は isu3 だけ4コア(上流READMEの Expected machine specs)。
+func TestNodeInstanceTypesOnlyWhereSpecsDiffer(t *testing.T) {
+	want := map[string]string{"isucon10-final": "c5.large,c5.large,c5.xlarge"}
+	for _, p := range List() {
+		if got := strings.Join(p.NodeInstanceTypes, ","); got != want[p.Name] {
+			t.Errorf("problem %s node instance types = %q, want %q", p.Name, got, want[p.Name])
+		}
+	}
+}
+
+func TestNodeTypes(t *testing.T) {
+	p := Problem{InstanceType: "c5.large", NodeInstanceTypes: []string{"c5.large", "c5.large", "c5.xlarge"}}
+	// 一覧より多い台数の残りは InstanceType になる。
+	if got := strings.Join(p.NodeTypes(4), ","); got != "c5.large,c5.large,c5.xlarge,c5.large" {
+		t.Errorf("got %q", got)
+	}
+	if got := strings.Join(p.NodeTypes(2), ","); got != "c5.large,c5.large" {
+		t.Errorf("got %q", got)
+	}
+	uniform := Problem{InstanceType: "c7a.large"}
+	if got := strings.Join(uniform.NodeTypes(2), ","); got != "c7a.large,c7a.large" {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestLookup(t *testing.T) {
 	p, err := Lookup("isucon13")
 	if err != nil {

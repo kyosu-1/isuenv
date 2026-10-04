@@ -37,6 +37,9 @@ type UpOptions struct {
 	AMIID        string
 	Nodes        int
 	InstanceType string
+	// NodeInstanceTypes は競技ノードごとのインスタンスタイプ(1号機から順)。
+	// ここに無い番号のノードは InstanceType になる。空なら全ノードが InstanceType。
+	NodeInstanceTypes []string
 	// BenchInstanceType が非空なら、競技ノードの次の番号でベンチマーカー用ノードを1台追加する。
 	// 空ならベンチノードは作らない。
 	BenchInstanceType string
@@ -60,7 +63,11 @@ type launch struct {
 func buildLaunches(opts UpOptions) []launch {
 	launches := make([]launch, 0, opts.Nodes+1)
 	for i := 1; i <= opts.Nodes; i++ {
-		launches = append(launches, launch{index: i, instanceType: opts.InstanceType, role: RoleApp})
+		instanceType := opts.InstanceType
+		if i <= len(opts.NodeInstanceTypes) {
+			instanceType = opts.NodeInstanceTypes[i-1]
+		}
+		launches = append(launches, launch{index: i, instanceType: instanceType, role: RoleApp})
 	}
 	if opts.BenchInstanceType != "" {
 		launches = append(launches, launch{index: opts.Nodes + 1, instanceType: opts.BenchInstanceType, role: RoleBench})

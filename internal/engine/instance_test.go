@@ -447,6 +447,14 @@ func TestBuildLaunches(t *testing.T) {
 	if withBench[3] != want {
 		t.Errorf("bench launch = %+v, want %+v", withBench[3], want)
 	}
+
+	// ノードごとのタイプは1号機から順に使い、足りない番号は InstanceType になる。
+	perNode := buildLaunches(UpOptions{Nodes: 3, InstanceType: "c5.large", NodeInstanceTypes: []string{"c5.xlarge", "c5.2xlarge"}})
+	for i, wantType := range []string{"c5.xlarge", "c5.2xlarge", "c5.large"} {
+		if got := perNode[i]; got.index != i+1 || got.instanceType != wantType || got.role != RoleApp {
+			t.Errorf("launch %d = %+v, want index %d type %s", i, got, i+1, wantType)
+		}
+	}
 }
 
 func TestEnvInstanceTypeSummary(t *testing.T) {

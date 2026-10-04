@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/kyosu-1/isuenv/internal/catalog"
@@ -38,7 +39,12 @@ func renderProblems(w io.Writer) {
 		if p.Bench != nil {
 			benchCmd = "yes"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", p.Name, p.SSHUser, p.InstanceType, bench, benchCmd, p.Notes)
+		// ノードごとの推奨値がある問題は、1号機から順に並べる(台数がそれより多いときの残りは既定タイプ)。
+		instanceType := p.InstanceType
+		if len(p.NodeInstanceTypes) > 0 {
+			instanceType = strings.Join(p.NodeInstanceTypes, ",")
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", p.Name, p.SSHUser, instanceType, bench, benchCmd, p.Notes)
 	}
 	tw.Flush()
 }
