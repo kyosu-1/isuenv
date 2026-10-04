@@ -15,12 +15,97 @@
 #   c5.xlarge   4vCPU /  8GiB  ValidCores [2]        ValidThreadsPerCore [1,2]
 #   c5.2xlarge  8vCPU / 16GiB  ValidCores [2,4]      ValidThreadsPerCore [1,2]
 #   c5.4xlarge 16vCPU / 32GiB  ValidCores [2,4,6,8]  ValidThreadsPerCore [1,2]
+#   m5.large    2vCPU /  8GiB  ValidCores [1]        ValidThreadsPerCore [1,2]
 #   r5.large    2vCPU / 16GiB  ValidCores [1]        ValidThreadsPerCore [1,2]
 #   c4.xlarge   4vCPU / 7.5GiB ValidCores [1,2]      ValidThreadsPerCore [1,2]
 #   c7a.large   2vCPU /  4GiB  ValidCores [1,2]      ValidThreadsPerCore [1]
 #   c7a.xlarge  4vCPU /  8GiB  ValidCores [1,2,3,4]  ValidThreadsPerCore [1]
 # t 系(バースト)はスコアが不安定になるので使わない。
 problems:
+  # isucon6〜8 の予選は、上流のAMIが 2021-04 のビルドのまま更新されていない(Ubuntu 16.04 / CentOS 7)。
+  # 上流には isucon5-qualify のAMIもあるが、カタログには入れていない。2026-10-05 に実機で確認したところ、
+  # AMIに本番データが入っておらず(開発用の6ユーザーだけ。ベンチのテストセットは本番データ前提)、
+  # 既定のRuby実装も mysql2 0.4.0 と Ruby 2.3 の非互換でDBクエリが全て例外になり、ベンチが通らない。
+  - name: isucon6-qualify
+    ami_pattern: "isucon6-qualify-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    # 本番の競技サーバーは Azure Standard_D2_v2(2vCPU / 7GiB)が1台
+    # (公式リポジトリの provisioning/qualifier/deploy.json の vmSize、Regulation.md の「サーバー1台のみ」)。
+    # AWSに 2vCPU / 7GiB のタイプは無いので、m5.large(2vCPU / 8GiB)を mem=7G で 7GiB に絞る。
+    official_nodes: 1
+    instance_type: m5.large
+    mem_gb: 7
+    # 本番のベンチは Azure Standard_F2(2vCPU / 4GiB)(公式リポジトリの provisioning/bench/deploy.json)。
+    # c5.large がちょうど同じ。
+    bench_instance_type: c5.large
+    # 初期実装(Perl)は pass するがスコアは 0 になる(公式の Regulation.md にも
+    # 「初期スコアが0になっています。これは不具合ではありません」とある)。
+    bench:
+      user: isucon
+      workdir: /home/isucon/isucon6q
+      command: ./isucon6q-bench
+      args:
+        - -target
+        - "http://{{.TargetIP}}"
+    notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon6-qualify"
+  - name: isucon7-qualify
+    ami_pattern: "isucon7-qualify-*"
+    owner_id: "839726181030"
+    ssh_user: ubuntu
+    # 本番の競技サーバーは3台(予選マニュアル)で、1台あたり「CPUは1コア」「メモリも1GB」
+    # (公式ブログ「ISUCON7 予選問題の公開と解説」 https://isucon.net/archives/50961706.html )。
+    # c5.large(2vCPU / 4GiB)を CoreCount=1 / ThreadsPerCore=1 で 1vCPU に、mem=1G で 1GiB に絞る。
+    # 「1コア」は isucon10-qualify と同じく1スレッド(1vCPU)として再現する。
+    official_nodes: 3
+    cpu_options: {core_count: 1, threads_per_core: 1}
+    mem_gb: 1
+    # ベンチのスペックは公式リポジトリ・マニュアル・公式ブログのどこにも公開されていないため(非公開)、
+    # bench_instance_type は設定しない(--bench-instance-type での明示指定が要る)。
+    # 本番の初期構成は Web 2台 + DB 1台だが、AMIは1台完結のイメージなので、複数台で立てると
+    # 全ノードが同じ1台完結の状態で起動する。-remotes はカンマ区切りで複数台を受けるが、
+    # ここでは他の問題と同じく1号機だけを対象にする。
+    bench:
+      user: isucon
+      workdir: /home/isucon/isubata/bench
+      command: bin/bench
+      args:
+        - -remotes
+        - "{{.TargetIP}}"
+        - -output
+        - result.json
+    notes: "本番は3台構成。bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon7-qualify"
+  - name: isucon8-qualify
+    ami_pattern: "isucon8-qualify-*"
+    owner_id: "839726181030"
+    # このAMIだけ CentOS 7 で、SSHユーザーが centos。
+    ssh_user: centos
+    # 本番の競技サーバーは「vCPU 2コア / メモリ 1GB」が3台(公式リポジトリのREADME「本番のマシンスペック」)。
+    # c5.large(2vCPU / 4GiB)を mem=1G で 1GiB に絞る。
+    # AMIにはスワップが無く、既定で起動しているのは Perl 実装(torb.perl)。2026-10-05 に実機で確認した結果:
+    #   - Perl 実装のまま mem=1G でベンチを回すと、売上レポート(/admin/api/reports/sales)でワーカーが
+    #     400MB 前後まで膨らんで OOM になり fail する(ノードが数分応答しなくなることもある)。
+    #     2GB のスワップを足すと1回目は pass した(スコア 903)が、ワーカーが膨らんだまま残り、2回目は fail した。
+    #   - Go 実装(torb.go)に切り替えると、mem=1G・スワップ無しのまま続けて pass する(スコア 1334)。
+    # 本番のサーバーにスワップがあったかは公開情報では確認できないので、isuenv はスワップを足さない。
+    official_nodes: 3
+    mem_gb: 1
+    # 本番のベンチは「同スペックのVMをベンチマーカー用に1台」(同README)。競技サーバーと同じにする。
+    bench_instance_type: c5.large
+    bench_mem_gb: 1
+    # /home/isucon が 700 で、sshユーザー(centos)からは cd できない。workdir は使わず、
+    # データと結果のパスを絶対パスで渡す。
+    bench:
+      user: isucon
+      command: /home/isucon/torb/bench/bin/bench
+      args:
+        - -data
+        - /home/isucon/torb/bench/data
+        - -remotes
+        - "{{.TargetIP}}"
+        - -output
+        - /home/isucon/torb/bench/result.json
+    notes: "AMIは CentOS 7。既定のPerl実装はメモリ 1GiB だとベンチ中に OOM で fail する(Go実装などに切り替えるか --no-limits)。bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon8-qualify"
   - name: isucon9-qualify
     ami_pattern: "isucon9-qualify-*"
     owner_id: "839726181030"

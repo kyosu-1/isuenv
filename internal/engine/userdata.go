@@ -59,7 +59,11 @@ func memKernelArgGB(memGB int) int {
 //   - x86 のカーネルは mem= が複数あると小さいほうが効く。AMIが別の値を焼き込んでいても
 //     意図した値になるよう、既存の mem= は取り除いてから足す(二重指定にしない)。
 //     grub.d のファイルは名前順に読まれるので、最後に読まれる名前にして他の設定の後で書き換える。
-//   - update-grub が失敗したら再起動しない(制限なしのまま動き続ける)。
+//   - grub の設定の入れ方はディストリビューションで違う。Debian系(update-grub)は grub.d に
+//     ファイルを置く。RHEL系(grub2-mkconfig。isucon8-qualify のAMIが CentOS 7)は grub.d を
+//     読まないので /etc/default/grub の末尾に足す(このファイルはシェルとして読まれるので、
+//     後ろに書いた代入が勝つ)。
+//   - grub の更新が失敗したら再起動しない(制限なしのまま動き続ける)。
 //   - ここでの再起動はOS内の reboot なので instance-initiated-shutdown-behavior=terminate の
 //     対象にならず、インスタンスもIPもそのまま残る。
 //
@@ -73,17 +77,31 @@ elif [ "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)" -le @MEM_KB@ ]; then
 elif [ -e /var/lib/isuenv-mem-applied ]; then
   echo "isuenv: mem=${ISUENV_MEM} was already applied once but is not in effect; not rebooting again"
 else
-  mkdir -p /etc/default/grub.d
-  cat <<'GRUB' > /etc/default/grub.d/zz-isuenv-mem.cfg
+  isuenv_apply_grub() {
+    if command -v update-grub >/dev/null 2>&1; then
+      mkdir -p /etc/default/grub.d
+      cat <<'GRUB' > /etc/default/grub.d/zz-isuenv-mem.cfg
 # isuenv: limit memory to the official spec of the contest (kernel argument mem=@MEM@).
 GRUB_CMDLINE_LINUX="$(printf '%s' "$GRUB_CMDLINE_LINUX" | sed -E 's/(^| +)mem=[^ ]*//g')"
 GRUB_CMDLINE_LINUX_DEFAULT="$(printf '%s' "$GRUB_CMDLINE_LINUX_DEFAULT" | sed -E 's/(^| +)mem=[^ ]*//g') mem=@MEM@"
 GRUB
-  if update-grub; then
+      update-grub
+    elif command -v grub2-mkconfig >/dev/null 2>&1; then
+      cat <<'GRUB' >> /etc/default/grub
+# isuenv: limit memory to the official spec of the contest (kernel argument mem=@MEM@).
+GRUB_CMDLINE_LINUX="$(printf '%s' "$GRUB_CMDLINE_LINUX" | sed -E 's/(^| +)mem=[^ ]*//g') mem=@MEM@"
+GRUB
+      grub2-mkconfig -o /boot/grub2/grub.cfg
+    else
+      echo "isuenv: neither update-grub nor grub2-mkconfig is available"
+      return 1
+    fi
+  }
+  if isuenv_apply_grub; then
     echo "${ISUENV_MEM}" > /var/lib/isuenv-mem-applied
     shutdown -r now "isuenv: rebooting once to apply mem=${ISUENV_MEM}"
   else
-    echo "isuenv: update-grub failed; memory is not limited"
+    echo "isuenv: updating grub failed; memory is not limited"
   fi
 fi
 `
