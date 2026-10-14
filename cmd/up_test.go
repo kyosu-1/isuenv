@@ -234,3 +234,17 @@ func TestMemLimitNote(t *testing.T) {
 		t.Errorf("a memory-limited node should produce a reboot note: got %q", got)
 	}
 }
+
+func TestValidateEnvName(t *testing.T) {
+	for _, name := range []string{"", "isucon14-mem8", "isucon14-b", "x"} {
+		if err := validateEnvName(name); err != nil {
+			t.Errorf("%q must be accepted: %v", name, err)
+		}
+	}
+	// 末尾が -<数字> / -bench だと別環境のノード名(isucon14-2 など)と衝突する。
+	for _, name := range []string{"isucon14-2", "isucon14-bench", "Isucon14", "isucon14_b", "-x", "a b"} {
+		if err := validateEnvName(name); err == nil {
+			t.Errorf("%q must be rejected", name)
+		}
+	}
+}

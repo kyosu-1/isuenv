@@ -41,6 +41,8 @@ func (n Node) TypeLabel() string {
 }
 
 type UpOptions struct {
+	// Name は環境名。空なら問題名を使う。同じ問題の環境を複数立てるときに分ける。
+	Name    string
 	Problem catalog.Problem
 	AMIID   string
 	Nodes   int
@@ -56,6 +58,14 @@ type UpOptions struct {
 	KeyName string
 	Net     Network
 	Now     time.Time
+}
+
+// EnvName は環境名を返す。Name が空なら問題名。
+func (o UpOptions) EnvName() string {
+	if o.Name != "" {
+		return o.Name
+	}
+	return o.Problem.Name
 }
 
 // launch は1インスタンスの起動内容。RunInstancesの引数が(番号, スペック, ロール)でしか
@@ -116,7 +126,7 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 	if opts.Nodes < 1 {
 		return nil, fmt.Errorf("nodes must be >= 1, got %d", opts.Nodes)
 	}
-	name := opts.Problem.Name
+	name := opts.EnvName()
 	existing, err := e.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
 			managedFilter(),
@@ -156,6 +166,7 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 				Tags: append([]ec2types.Tag{
 					{Key: aws.String(TagManaged), Value: aws.String("true")},
 					{Key: aws.String(TagEnv), Value: aws.String(name)},
+					{Key: aws.String(TagProblem), Value: aws.String(opts.Problem.Name)},
 					{Key: aws.String(TagNode), Value: aws.String(strconv.Itoa(l.index))},
 					{Key: aws.String(TagExpires), Value: aws.String(expires)},
 					{Key: aws.String(TagRole), Value: aws.String(l.role)},
@@ -243,7 +254,9 @@ func (e *Engine) rollback(ids []string) {
 }
 
 type Env struct {
-	Name       string
+	Name string
+	// Problem は問題名。isuenv:problem タグを持たない古い環境では環境名と同じ。
+	Problem    string
 	LaunchedAt time.Time
 	ExpiresAt  time.Time
 	Nodes      []Node
@@ -316,7 +329,10 @@ func (e *Engine) List(ctx context.Context) ([]Env, error) {
 			}
 			env, ok := byName[name]
 			if !ok {
-				env = &Env{Name: name}
+				env = &Env{Name: name, Problem: name}
+				if v := tagValue(inst.Tags, TagProblem); v != "" {
+					env.Problem = v
+				}
 				if v := tagValue(inst.Tags, TagExpires); v != "" {
 					if ts, err := time.Parse(time.RFC3339, v); err == nil {
 						env.ExpiresAt = ts

@@ -632,3 +632,71 @@ func TestNodeName(t *testing.T) {
 		t.Errorf("bench node name = %q, want isucon13-bench", got)
 	}
 }
+
+func TestUp_NameSeparatesEnvFromProblem(t *testing.T) {
+	PollInterval = time.Millisecond
+	var dupFilter []string
+	var runs []*ec2.RunInstancesInput
+	m := &awsapi.Mock{
+		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+			runs = append(runs, in)
+			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String("i-1")}}}, nil
+		},
+		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+			if len(in.InstanceIds) == 0 {
+				for _, f := range in.Filters {
+					if aws.ToString(f.Name) == "tag:"+TagEnv {
+						dupFilter = f.Values
+					}
+				}
+				return &ec2.DescribeInstancesOutput{}, nil
+			}
+			return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{
+				runningInstance("i-1", "isucon13-b", "1", "54.0.0.1", "10.100.0.11"),
+			}}}}, nil
+		},
+	}
+	e := &Engine{EC2: m}
+	_, err := e.Up(context.Background(), UpOptions{
+		Name: "isucon13-b", Problem: testProblem(), AMIID: "ami-123", Nodes: 1, InstanceType: "c5.large",
+		TTL: time.Hour, KeyName: "isuenv", Now: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 同じ問題の別の環境(isucon13)があっても、重複チェックは環境名で行う。
+	if len(dupFilter) != 1 || dupFilter[0] != "isucon13-b" {
+		t.Errorf("duplicate check must filter by env name: %v", dupFilter)
+	}
+	tags := runs[0].TagSpecifications[0].Tags
+	if tagValue(tags, TagEnv) != "isucon13-b" || tagValue(tags, TagProblem) != "isucon13" || tagValue(tags, "Name") != "isucon13-b-1" {
+		t.Errorf("env/problem/Name tags must follow --name: %+v", tags)
+	}
+}
+
+func TestList_ProblemFromTag(t *testing.T) {
+	named := runningInstance("i-2", "isucon14-mem8", "1", "54.0.0.2", "10.100.0.12")
+	named.Tags = append(named.Tags, ec2types.Tag{Key: aws.String(TagProblem), Value: aws.String("isucon14")})
+	m := &awsapi.Mock{
+		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+			return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{
+				runningInstance("i-1", "isucon14", "1", "54.0.0.1", "10.100.0.11"),
+				named,
+			}}}}, nil
+		},
+	}
+	envs, err := (&Engine{EC2: m}).List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(envs) != 2 {
+		t.Fatalf("expected 2 envs, got %+v", envs)
+	}
+	// isuenv:problem タグを持たない古い環境は、環境名を問題名とみなす。
+	if envs[0].Name != "isucon14" || envs[0].Problem != "isucon14" {
+		t.Errorf("legacy env must use its name as problem: %+v", envs[0])
+	}
+	if envs[1].Name != "isucon14-mem8" || envs[1].Problem != "isucon14" {
+		t.Errorf("problem must come from the tag: %+v", envs[1])
+	}
+}

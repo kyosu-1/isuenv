@@ -24,6 +24,9 @@ const (
 	// タグに残しておかないと list などで表示できない。
 	TagVCPUs = "isuenv:vcpus"
 	TagMemGB = "isuenv:mem-gb"
+	// TagProblem は環境の問題名。環境名は --name で問題名と別にできるので、
+	// ssh のユーザーやベンチの起動方法を引くために問題名を別に残す。
+	TagProblem = "isuenv:problem"
 )
 
 // isuenv:role タグの値。

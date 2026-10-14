@@ -10,7 +10,7 @@ import (
 )
 
 var downCmd = &cobra.Command{
-	Use:   "down <problem>",
+	Use:   "down <env>",
 	Short: "Terminate a practice environment",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
