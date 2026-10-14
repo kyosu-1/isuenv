@@ -97,8 +97,25 @@ Ensuring network...
 | `--bench` | `false` | ベンチマーカー専用ノードを1台追加する。スペックは `isuenv problems` の BENCH TYPE 列の値（上流の推奨タイプ、または本番のベンチのスペック）。本番のベンチのスペックが非公開の問題（isucon7-qualify、isucon9-final）ではエラーになる |
 | `--bench-instance-type` | なし | ベンチマーカー専用ノードのインスタンスタイプを明示する。指定すると `--bench` は省略できる。その問題のベンチのCPU制限は外れる |
 | `--no-limits` | `false` | 公式スペックに合わせるためのCPU・メモリの制限を全て外し、インスタンスタイプそのままで起動する |
+| `--name` | 問題名 | 環境名。同じ問題の環境を並べて立てるときに分ける（[同じ問題を複数立てる](#同じ問題を複数立てる)） |
 
 同名の環境が既にある場合は起動せずエラーになる。作り直すときは先に `down` する。
+
+#### 同じ問題を複数立てる
+
+環境名は既定で問題名なので、同じ問題の環境は1つしか立てられない。`--name` で別の環境名を付ければ並べて立てられる。
+ノード名（ssh のホスト名・EC2 の Name タグ）は環境名から付き、`list` / `ssh` / `bench` / `down` は環境名で指定する。
+
+```sh
+isuenv up isucon14 --nodes 3 --bench                       # isucon14-1..3, isucon14-bench
+isuenv up isucon14 --nodes 3 --bench --name isucon14-exp   # isucon14-exp-1..3, isucon14-exp-bench
+isuenv bench isucon14-exp
+isuenv down isucon14-exp
+```
+
+環境名に使えるのは英小文字・数字・`-` だけ。末尾が `-<数字>` や `-bench` の名前（`isucon14-2` など）は
+別の環境のノード名と同じになるのでエラーにする。問題名は `isuenv:problem` タグに残し、
+ssh のユーザーやベンチの起動方法はそこから引く。
 
 **`--ttl` の書式は Go の duration 文字列**で、単位は `h` / `m` / `s`。組み合わせもできる。
 
@@ -265,7 +282,7 @@ $ isuenv up private-isu --bench
 
 | 列 | 内容 |
 | --- | --- |
-| `ENV` | 問題名 |
+| `ENV` | 環境名（`--name` を付けなければ問題名） |
 | `NODES` | 台数 |
 | `TYPE` | インスタンスタイプ。ベンチノードがある場合は `c7a.large +bench c7a.xlarge` のように混在を表す。CPUやメモリを絞って起動したノードは `c5.large(1vCPU,mem=2G)` のように制限を添える |
 | `UPTIME` | 起動からの経過時間 |
@@ -273,7 +290,7 @@ $ isuenv up private-isu --bench
 | `TTL LEFT` | 自動terminateまでの残り時間 |
 | `PUBLIC IPS` | 各ノードのパブリックIP |
 
-### `isuenv ssh <問題名>[-N|-bench]`
+### `isuenv ssh <環境名>[-N|-bench]`
 
 ノードにSSHする。番号を省略すると1号機に繋ぐ（`isucon13` = `isucon13-1`）。
 ベンチマーカー専用ノードには `isucon13-bench` で繋ぐ。
@@ -285,7 +302,7 @@ $ isuenv up private-isu --bench
 
 生成されたssh configは `~/.ssh/config` からIncludeされるので、素の `ssh isucon13-1` やVS Code Remoteからも使える。
 
-### `isuenv bench <問題名>`
+### `isuenv bench <環境名>`
 
 稼働中の環境に対してベンチマーカーを実行するコマンドを**表示する**。実行はしない。
 
@@ -314,7 +331,7 @@ isuenv bench isucon14 >> Makefile           # Makefileに取り込む
 （現在は isucon6-qualify、isucon7-qualify、isucon8-qualify、isucon14、private-isu）。
 未対応の問題では、NOTESのリンク先を見るよう促すエラーになる。
 
-### `isuenv down <問題名>`
+### `isuenv down <環境名>`
 
 その環境のインスタンスをterminateする。VPC・サブネット・SG・キーペアは残るので、次の `up` で再利用される。対象が無い場合も成功扱い。
 
@@ -359,7 +376,7 @@ AWS上のリソースはすべて `isuenv:managed=true` タグが付き、`nuke`
 | キーペア | 名前 `isuenv` |
 | EC2インスタンス | `--nodes` の台数（`--bench` 指定時はベンチ用に+1台） |
 
-インスタンスには `isuenv:env`（問題名）、`isuenv:node`（何号機か）、`isuenv:role`（`app` = 競技ノード /
+インスタンスには `isuenv:env`（環境名）、`isuenv:problem`（問題名）、`isuenv:node`（何号機か）、`isuenv:role`（`app` = 競技ノード /
 `bench` = ベンチマーカー専用ノード）、`isuenv:expires-at`（TTLの絶対期限）のタグが付く。
 CPUやメモリを絞って起動したノードには、`isuenv:vcpus`（絞った後のvCPU数）と `isuenv:mem-gb`（`mem=` のGiB数）も付く。
 CLIはローカルに状態を持たず、すべてこれらのタグから復元する。

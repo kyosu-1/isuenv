@@ -15,7 +15,7 @@ import (
 var nodeSuffix = regexp.MustCompile(`-(\d+|bench)$`)
 
 var sshCmd = &cobra.Command{
-	Use:   "ssh <problem>[-N|-bench]",
+	Use:   "ssh <env>[-N|-bench]",
 	Short: "SSH into a practice environment node (node 1 by default)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {

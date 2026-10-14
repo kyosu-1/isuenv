@@ -14,7 +14,7 @@ import (
 // 自前のMakefileやスクリプトで回すのが定番だから。出力するだけなら
 // `$(isuenv bench isucon14)` でも Makefile でも tmux でも好きに組み込める。
 var benchCmd = &cobra.Command{
-	Use:   "bench <problem>",
+	Use:   "bench <env>",
 	Short: "Print the command to run the benchmarker for a running environment",
 	Long: "Print a ready-to-paste ssh command that runs the benchmarker against a running environment.\n" +
 		"It does not run anything; the private IPs that the benchmarker needs are filled in for you.",
@@ -22,10 +22,6 @@ var benchCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 		name := args[0]
-		bench, err := benchOrError(name)
-		if err != nil {
-			return err
-		}
 		client, err := newEC2Client(ctx)
 		if err != nil {
 			return err
@@ -43,6 +39,10 @@ var benchCmd = &cobra.Command{
 		}
 		if env.Name == "" {
 			return fmt.Errorf("environment %q is not running; run `isuenv up %s` first", name, name)
+		}
+		bench, err := benchOrError(env.Problem)
+		if err != nil {
+			return err
 		}
 		host, vars, err := benchTarget(env)
 		if err != nil {

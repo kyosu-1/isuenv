@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -22,7 +23,27 @@ var (
 	upBench             bool
 	upBenchInstanceType string
 	upNoLimits          bool
+	upName              string
 )
+
+// envNamePattern は --name に使える文字。環境名は ssh のホスト名と EC2 のタグにそのまま入る。
+var envNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+// validateEnvName は --name の値を検査する。空(問題名を使う)は通す。
+// ノード名は <環境名>-<番号> / <環境名>-bench なので、末尾が -<数字> や -bench の環境名は
+// 別の環境のノード名と区別できなくなる(isucon14-2 は isucon14 の2号機と同じ名前になる)。
+func validateEnvName(name string) error {
+	if name == "" {
+		return nil
+	}
+	if !envNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid --name %q: use lowercase letters, digits and '-'", name)
+	}
+	if nodeSuffix.MatchString(name) {
+		return fmt.Errorf("invalid --name %q: must not end with -<number> or -bench (it would clash with node names)", name)
+	}
+	return nil
+}
 
 var upCmd = &cobra.Command{
 	Use:   "up <problem>",
@@ -32,6 +53,9 @@ var upCmd = &cobra.Command{
 		ctx := cmd.Context()
 		p, err := catalog.Lookup(args[0])
 		if err != nil {
+			return err
+		}
+		if err := validateEnvName(upName); err != nil {
 			return err
 		}
 		client, err := newEC2Client(ctx)
@@ -70,12 +94,16 @@ var upCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Launching %d node(s) of %s (%s, TTL %s)...\n", upNodes, p.Name, describeNodeSpecs(nodeSpecs), upTTL)
+		name := p.Name
+		if upName != "" {
+			name = upName
+		}
+		fmt.Printf("Launching %d node(s) of %s as %s (%s, TTL %s)...\n", upNodes, p.Name, name, describeNodeSpecs(nodeSpecs), upTTL)
 		if benchSpec != nil {
 			fmt.Printf("  plus 1 bench node (%s)\n", benchSpec.Label())
 		}
 		nodes, err := e.Up(ctx, engine.UpOptions{
-			Problem: p, AMIID: ami.ID, Nodes: upNodes, NodeSpecs: nodeSpecs,
+			Name: name, Problem: p, AMIID: ami.ID, Nodes: upNodes, NodeSpecs: nodeSpecs,
 			Bench: benchSpec,
 			TTL:   upTTL, KeyName: key, Net: net, Now: time.Now(),
 		})
@@ -84,8 +112,8 @@ var upCmd = &cobra.Command{
 		}
 		// ssh-config更新に失敗してもノードのIPは既に確保できているので、
 		// まず結果を表示してからssh-config更新を試みる（失敗時は警告のみでnilを返す）。
-		fmt.Printf("\n%s is ready. Auto-terminates in %s.\n\n", p.Name, upTTL)
-		for _, line := range formatNodeLines(p.Name, nodes) {
+		fmt.Printf("\n%s is ready. Auto-terminates in %s.\n\n", name, upTTL)
+		for _, line := range formatNodeLines(name, nodes) {
 			fmt.Println(line)
 		}
 		if note := memLimitNote(nodes); note != "" {
@@ -245,6 +273,7 @@ func init() {
 	upCmd.Flags().StringSliceVar(&upNodeInstanceTypes, "node-instance-types", nil, "comma-separated EC2 instance types per node, from node 1 (default: per-problem)")
 	upCmd.Flags().BoolVar(&upBench, "bench", false, "add one benchmarker node using the per-problem bench instance type")
 	upCmd.Flags().StringVar(&upBenchInstanceType, "bench-instance-type", "", "EC2 instance type for the benchmarker node (implies --bench)")
+	upCmd.Flags().StringVar(&upName, "name", "", "environment name, to run several environments of the same problem (default: the problem name)")
 	upCmd.Flags().BoolVar(&upNoLimits, "no-limits", false, "launch plain instance types without the per-problem CPU and memory limits")
 	rootCmd.AddCommand(upCmd)
 }

@@ -25,7 +25,7 @@ func refreshSSHConfig(ctx context.Context, e *engine.Engine, excludeIDs ...strin
 	var hosts []sshconf.Host
 	for _, env := range envs {
 		user := "ubuntu"
-		if p, err := catalog.Lookup(env.Name); err == nil {
+		if p, err := catalog.Lookup(env.Problem); err == nil {
 			user = p.SSHUser
 		}
 		for _, n := range env.Nodes {
