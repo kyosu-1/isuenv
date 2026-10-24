@@ -44,8 +44,11 @@ func TestOfficialSpecs(t *testing.T) {
 	}
 	wants := map[string]want{
 		"isucon6-qualify":  {1, "m5.large(mem=7G)", "c5.large"},
+		"isucon6-final":    {5, "m5.large(mem=7G)", "m5.xlarge(mem=14G)"},
 		"isucon7-qualify":  {3, "c5.large(1vCPU,mem=1G)", ""},
+		"isucon7-final":    {4, "c5.large", ""},
 		"isucon8-qualify":  {3, "c5.large(mem=1G)", "c5.large(mem=1G)"},
+		"isucon8-final":    {4, "c5.large(mem=1G)", "c7i.2xlarge(6vCPU,mem=4G)"},
 		"isucon9-qualify":  {3, "c5.large", "c5.4xlarge(12vCPU)"},
 		"isucon9-final":    {3, "c5.large(mem=1G)", ""},
 		"isucon10-qualify": {3, "c5.large(1vCPU,mem=2G)", "r5.large(1vCPU)"},
@@ -97,15 +100,17 @@ func TestCatalogLimitsAreValidForInstanceType(t *testing.T) {
 		memMiB              int
 	}
 	shapes := map[string]shape{
-		"c4.xlarge":  {[]int32{1, 2}, []int32{1, 2}, 7680},
-		"c5.large":   {[]int32{1}, []int32{1, 2}, 4096},
-		"c5.xlarge":  {[]int32{2}, []int32{1, 2}, 8192},
-		"c5.2xlarge": {[]int32{2, 4}, []int32{1, 2}, 16384},
-		"c5.4xlarge": {[]int32{2, 4, 6, 8}, []int32{1, 2}, 32768},
-		"c7a.large":  {[]int32{1, 2}, []int32{1}, 4096},
-		"c7a.xlarge": {[]int32{1, 2, 3, 4}, []int32{1}, 8192},
-		"m5.large":   {[]int32{1}, []int32{1, 2}, 8192},
-		"r5.large":   {[]int32{1}, []int32{1, 2}, 16384},
+		"c4.xlarge":   {[]int32{1, 2}, []int32{1, 2}, 7680},
+		"c5.large":    {[]int32{1}, []int32{1, 2}, 4096},
+		"c5.xlarge":   {[]int32{2}, []int32{1, 2}, 8192},
+		"c5.2xlarge":  {[]int32{2, 4}, []int32{1, 2}, 16384},
+		"c5.4xlarge":  {[]int32{2, 4, 6, 8}, []int32{1, 2}, 32768},
+		"c7a.large":   {[]int32{1, 2}, []int32{1}, 4096},
+		"c7a.xlarge":  {[]int32{1, 2, 3, 4}, []int32{1}, 8192},
+		"c7i.2xlarge": {[]int32{1, 2, 3, 4}, []int32{1, 2}, 16384},
+		"m5.large":    {[]int32{1}, []int32{1, 2}, 8192},
+		"m5.xlarge":   {[]int32{2}, []int32{1, 2}, 16384},
+		"r5.large":    {[]int32{1}, []int32{1, 2}, 16384},
 	}
 	contains := func(list []int32, v int32) bool {
 		for _, x := range list {
@@ -262,8 +267,11 @@ func TestLookupPrivateISU(t *testing.T) {
 func TestBenchInstanceTypeOnlyWhereRecommended(t *testing.T) {
 	want := map[string]string{
 		"isucon6-qualify":  "c5.large",
+		"isucon6-final":    "m5.xlarge",
 		"isucon7-qualify":  "",
+		"isucon7-final":    "",
 		"isucon8-qualify":  "c5.large",
+		"isucon8-final":    "c7i.2xlarge",
 		"isucon9-qualify":  "c5.4xlarge",
 		"isucon9-final":    "",
 		"isucon10-qualify": "r5.large",
@@ -292,8 +300,11 @@ func TestBenchInstanceTypeOnlyWhereRecommended(t *testing.T) {
 func TestProblemsWithBench(t *testing.T) {
 	want := map[string]bool{
 		"isucon6-qualify": true,
+		"isucon6-final":   true,
 		"isucon7-qualify": true,
+		"isucon7-final":   true,
 		"isucon8-qualify": true,
+		"isucon8-final":   true,
 		"isucon14":        true,
 		"private-isu":     true,
 	}

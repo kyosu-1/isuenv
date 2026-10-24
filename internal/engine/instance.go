@@ -147,9 +147,11 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 	expires := expiresAt.UTC().Format(time.RFC3339)
 
 	var ids []string
+	var hosts []string
 	for _, l := range buildLaunches(opts) {
 		// メモリ制限はノードごとに違いうるので、user-dataもノードごとに組み立てる。
-		userData := base64.StdEncoding.EncodeToString([]byte(BuildUserData(expiresAt, l.spec.MemGB)))
+		node := NodeInfo{Role: l.role, Index: l.index, Nodes: opts.Nodes, HasBench: opts.Bench != nil}
+		userData := base64.StdEncoding.EncodeToString([]byte(BuildUserData(expiresAt, l.spec.MemGB, node)))
 		out, err := e.EC2.RunInstances(ctx, &ec2.RunInstancesInput{
 			ImageId:                           aws.String(opts.AMIID),
 			InstanceType:                      ec2types.InstanceType(l.spec.InstanceType),
@@ -161,6 +163,10 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 			SecurityGroupIds:                  []string{opts.Net.SecurityGroupID},
 			UserData:                          aws.String(userData),
 			InstanceInitiatedShutdownBehavior: ec2types.ShutdownBehaviorTerminate,
+			// ノードが自分のタグ(TagHosts)をインスタンスメタデータから読めるようにする。
+			MetadataOptions: &ec2types.InstanceMetadataOptionsRequest{
+				InstanceMetadataTags: ec2types.InstanceMetadataTagsStateEnabled,
+			},
 			TagSpecifications: []ec2types.TagSpecification{{
 				ResourceType: ec2types.ResourceTypeInstance,
 				Tags: append([]ec2types.Tag{
@@ -184,6 +190,13 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 			return nil, fmt.Errorf("launch node %d of %s: empty RunInstances response (launched instances were rolled back)", l.index, name)
 		}
 		ids = append(ids, aws.ToString(out.Instances[0].InstanceId))
+		hosts = append(hosts, hostEntry(l, aws.ToString(out.Instances[0].PrivateIpAddress)))
+	}
+
+	// プライベートIPは RunInstances の応答で決まっているので、running を待たずに付けられる。
+	if err := e.tagHosts(ctx, ids, strings.Join(hosts, ",")); err != nil {
+		e.rollback(ids)
+		return nil, fmt.Errorf("tag hosts of %s: %w (instances were rolled back)", name, err)
 	}
 
 	nodes, err := e.waitRunning(ctx, ids)
@@ -192,6 +205,32 @@ func (e *Engine) Up(ctx context.Context, opts UpOptions) ([]Node, error) {
 		return nil, fmt.Errorf("wait for %s: %w (instances were rolled back)", name, err)
 	}
 	return nodes, nil
+}
+
+// tagHosts は全ノードに TagHosts を付ける。RunInstances 直後は結果整合性で
+// InvalidInstanceID.NotFound が返ることがあるので、waitRunning と同じくリトライする。
+func (e *Engine) tagHosts(ctx context.Context, ids []string, hosts string) error {
+	for attempt := 0; ; attempt++ {
+		_, err := e.EC2.CreateTags(ctx, &ec2.CreateTagsInput{
+			Resources: ids,
+			Tags:      []ec2types.Tag{{Key: aws.String(TagHosts), Value: aws.String(hosts)}},
+		})
+		var apiErr smithy.APIError
+		if err == nil || !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidInstanceID.NotFound" || attempt+1 >= maxPolls {
+			return err
+		}
+		if err := sleepOrDone(ctx); err != nil {
+			return err
+		}
+	}
+}
+
+// hostEntry は TagHosts の1ノード分("2=10.100.0.6"、ベンチノードは "bench=10.100.0.7")。
+func hostEntry(l launch, privateIP string) string {
+	if l.role == RoleBench {
+		return "bench=" + privateIP
+	}
+	return strconv.Itoa(l.index) + "=" + privateIP
 }
 
 func (e *Engine) waitRunning(ctx context.Context, ids []string) ([]Node, error) {

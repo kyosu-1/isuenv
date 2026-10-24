@@ -35,6 +35,7 @@ type Mock struct {
 	RunInstancesFunc                  func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error)
 	DescribeInstancesFunc             func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error)
 	TerminateInstancesFunc            func(ctx context.Context, in *ec2.TerminateInstancesInput) (*ec2.TerminateInstancesOutput, error)
+	CreateTagsFunc                    func(ctx context.Context, in *ec2.CreateTagsInput) (*ec2.CreateTagsOutput, error)
 }
 
 func (m *Mock) DescribeImages(ctx context.Context, in *ec2.DescribeImagesInput, _ ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error) {
@@ -217,6 +218,13 @@ func (m *Mock) TerminateInstances(ctx context.Context, in *ec2.TerminateInstance
 		panic("unexpected call: TerminateInstances")
 	}
 	return m.TerminateInstancesFunc(ctx, in)
+}
+
+func (m *Mock) CreateTags(ctx context.Context, in *ec2.CreateTagsInput, _ ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
+	if m.CreateTagsFunc == nil {
+		panic("unexpected call: CreateTags")
+	}
+	return m.CreateTagsFunc(ctx, in)
 }
 
 var _ EC2API = (*Mock)(nil)

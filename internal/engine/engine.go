@@ -27,6 +27,11 @@ const (
 	// TagProblem は環境の問題名。環境名は --name で問題名と別にできるので、
 	// ssh のユーザーやベンチの起動方法を引くために問題名を別に残す。
 	TagProblem = "isuenv:problem"
+	// TagHosts は環境の全ノードのプライベートIP。"1=10.100.0.5,2=10.100.0.6,bench=10.100.0.7" の形。
+	// 全ノードを起動した後に付け、ノードはインスタンスメタデータのタグ(IMDS)から読む。
+	// 台ごとに役割が違う問題(isucon7-final の Web 3台 + DB 1台)が、他のノードのIPを知るのに使う。
+	// IPは起動するまで決まらないので user-data には書けない。
+	TagHosts = "isuenv:hosts"
 )
 
 // isuenv:role タグの値。

@@ -14,9 +14,10 @@ import (
 // 実行されないため、リブートされた練習環境は永久に動き続けてしまう。そこで絶対時刻を
 // /var/lib/isuenv-expires-at に書き込み、cron.dで毎分チェックする方式にすることでリブート耐性を持たせる。
 //
-// memGB が正なら、続けてカーネル引数 mem= でOSから見えるメモリを約 memGB GiB に絞る処理(memLimitScript)を足す。
+// 続けてノードの情報(nodeInfoScript)を書き、AMIが初期化スクリプトを持っていれば実行する。
+// memGB が正なら、最後にカーネル引数 mem= でOSから見えるメモリを約 memGB GiB に絞る処理(memLimitScript)を足す。
 // TTLの設定を先に書くので、メモリ制限の適用(再起動を伴う)がどう転んでも自己消滅は効く。
-func BuildUserData(expiresAt time.Time, memGB int) string {
+func BuildUserData(expiresAt time.Time, memGB int, node NodeInfo) string {
 	epoch := expiresAt.Unix()
 	script := fmt.Sprintf(`#!/bin/sh
 echo %d > /var/lib/isuenv-expires-at
@@ -24,6 +25,7 @@ cat <<'CRON' > /etc/cron.d/isuenv-ttl
 * * * * * root [ "$(date +\%%s)" -ge "$(cat /var/lib/isuenv-expires-at)" ] && /sbin/shutdown -P now "isuenv TTL expired"
 CRON
 `, epoch)
+	script += node.script()
 	if memGB > 0 {
 		script += strings.NewReplacer(
 			"@MEM@", fmt.Sprintf("%dG", memKernelArgGB(memGB)),
@@ -31,6 +33,38 @@ CRON
 		).Replace(memLimitScript)
 	}
 	return script
+}
+
+// NodeInfo は環境の中でのノードの位置づけ。AMIに渡し、ノードごとに初期状態を変える問題
+// (ベンチノードでだけ外部APIを動かす isucon8-final など)が使う。
+type NodeInfo struct {
+	Role     string // RoleApp または RoleBench
+	Index    int    // isuenv:node タグと同じ番号。競技ノードは1から、ベンチノードは競技ノードの次
+	Nodes    int    // 競技ノードの台数
+	HasBench bool   // ベンチノードがあるか
+}
+
+// script はノードの情報を /etc/isuenv/node.env に書き、AMIに /usr/local/sbin/isuenv-node-init が
+// あれば実行するシェルを返す。問題ごとの切り替えはAMI側に置き、isuenv は事実を渡すだけにする。
+// 初期化スクリプトを持たないAMI(matsuu/aws-isucon のもの)では、ファイルを書くだけで何も起きない。
+// メモリ制限の再起動の後で user-data がもう一度実行されることがあるので、初期化スクリプトは冪等に作る。
+// 初期化に失敗しても、続くメモリ制限は適用する。
+func (n NodeInfo) script() string {
+	hasBench := 0
+	if n.HasBench {
+		hasBench = 1
+	}
+	return fmt.Sprintf(`mkdir -p /etc/isuenv
+cat <<'NODE' > /etc/isuenv/node.env
+ISUENV_ROLE=%s
+ISUENV_NODE_INDEX=%d
+ISUENV_NODES=%d
+ISUENV_HAS_BENCH=%d
+NODE
+if [ -x /usr/local/sbin/isuenv-node-init ]; then
+  /usr/local/sbin/isuenv-node-init || echo "isuenv: isuenv-node-init failed"
+fi
+`, n.Role, n.Index, n.Nodes, hasBench)
 }
 
 // memKernelArgGB は、OSから見えるメモリを memGB にするためにカーネル引数 mem= へ渡す値を返す。

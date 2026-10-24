@@ -8,8 +8,11 @@ ISUCON過去問と[private-isu](https://github.com/catatsuy/private-isu)の練�
 | 問題名 | 本番の台数 | 競技ノード | ベンチノード | `isuenv bench` | AMI・ベンチ手順 |
 | --- | --- | --- | --- | --- | --- |
 | `isucon6-qualify` | 1 | `m5.large`（メモリ 7GiB に制限） | `c5.large` | 対応 | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon6-qualify) |
+| `isucon6-final` | 5 | `m5.large`（メモリ 7GiB に制限） | `m5.xlarge`（メモリ 14GiB に制限） | 対応 | [isuenv が作成](images/provision/isucon6-final.sh)（[本戦のAMI](#本戦のami)） |
 | `isucon7-qualify` | 3 | `c5.large`（1 vCPU / 1GiB に制限） | -（非公開） | 対応 | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon7-qualify) |
+| `isucon7-final` | 4 | `c5.large`（非公開のため制限なし） | -（非公開） | 対応 | [isuenv が作成](images/provision/isucon7-final.sh)（[本戦のAMI](#本戦のami)） |
 | `isucon8-qualify` | 3 | `c5.large`（メモリ 1GiB に制限） | `c5.large`（メモリ 1GiB に制限） | 対応 | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon8-qualify) |
+| `isucon8-final` | 4 | `c5.large`（メモリ 1GiB に制限） | `c7i.2xlarge`（6 vCPU / 4GiB に制限。外部APIも同居） | 対応 | [isuenv が作成](images/provision/isucon8-final.sh)（[本戦のAMI](#本戦のami)） |
 | `isucon9-qualify` | 3 | `c5.large` | `c5.4xlarge`（12 vCPU に制限） | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon9-qualify) |
 | `isucon9-final` | 3 | `c5.large`（メモリ 1GiB に制限） | -（非公開） | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon9-final) |
 | `isucon10-qualify` | 3 | `c5.large`（1 vCPU / 2GiB に制限） | `r5.large`（1 vCPU に制限） | - | [matsuu/aws-isucon](https://github.com/matsuu/aws-isucon/tree/main/isucon10-qualify) |
@@ -34,6 +37,8 @@ ISUCON過去問と[private-isu](https://github.com/catatsuy/private-isu)の練�
 
 isucon6〜8 の予選はAMIが古く（2021年のビルド）、ほかの問題と違う点がある。使う前に[古いAMIの注意点](#古いamiの注意点)を読むこと。
 
+isucon6〜8 の本戦は上流にAMIが無いので、isuenv が自分で作って公開したAMIを使う。中身と本番との違いは[本戦のAMI](#本戦のami)を読むこと。
+
 ## インストール
 
 Homebrew（macOSのみ。Cask配布なのでLinuxbrewからは入らない）:
@@ -54,7 +59,7 @@ go install github.com/kyosu-1/isuenv@latest
 
 - AWS認証情報（`AWS_PROFILE` などSDKの標準的な方法で解決される）
 - リージョンは ap-northeast-1 固定
-- EC2の vCPU クォータ（複数台構成を使う場合は6 vCPU以上）
+- EC2の vCPU クォータ（複数台構成を使う場合は6 vCPU以上。isucon6-final・isucon8-final を本番の構成（`--nodes 5 --bench` / `--nodes 4 --bench`）で立てるなら16 vCPU以上）
 
 ## 使い方
 
@@ -94,7 +99,7 @@ Ensuring network...
 | `--nodes` | `1` | 起動台数。1以上 |
 | `--instance-type` | 問題ごと | 全競技ノードのEC2インスタンスタイプ。既定値は問題ごとに異なり、`isuenv problems` の TYPE 列で確認できる（ほとんどは `c5.large`、private-isuは推奨に合わせて `c7a.large`）。指定するとその問題のCPU制限は外れる（[タイプを指定したとき](#タイプを指定したとき)） |
 | `--node-instance-types` | 問題ごと | 競技ノードごとのインスタンスタイプを、1号機から順にカンマ区切りで指定する（[ノードごとのスペック](#ノードごとのスペック)）。`--instance-type` とは併用できない |
-| `--bench` | `false` | ベンチマーカー専用ノードを1台追加する。スペックは `isuenv problems` の BENCH TYPE 列の値（上流の推奨タイプ、または本番のベンチのスペック）。本番のベンチのスペックが非公開の問題（isucon7-qualify、isucon9-final）ではエラーになる |
+| `--bench` | `false` | ベンチマーカー専用ノードを1台追加する。スペックは `isuenv problems` の BENCH TYPE 列の値（上流の推奨タイプ、または本番のベンチのスペック）。本番のベンチのスペックが非公開の問題（isucon7-qualify、isucon7-final、isucon9-final）ではエラーになる |
 | `--bench-instance-type` | なし | ベンチマーカー専用ノードのインスタンスタイプを明示する。指定すると `--bench` は省略できる。その問題のベンチのCPU制限は外れる |
 | `--no-limits` | `false` | 公式スペックに合わせるためのCPU・メモリの制限を全て外し、インスタンスタイプそのままで起動する |
 | `--name` | 問題名 | 環境名。同じ問題の環境を並べて立てるときに分ける（[同じ問題を複数立てる](#同じ問題を複数立てる)） |
@@ -175,7 +180,7 @@ free -m            # mem=2G なら total は約1.9GB（カーネルが予約す�
 - 再起動は1回だけ。何かの理由で制限が効かなくても、再起動を繰り返すことはない（その場合は制限なしで動き続ける）
 - TTLによる自動terminateは、この再起動の前に仕込まれる。再起動しても期限は維持される（[TTLの挙動](#ttlの挙動)）
 - isucon10 の「1コア」「2コア」が物理コアを指すのか論理スレッドを指すのかは、公開情報からは断定できない。isuenvはvCPU数（スレッド数）として再現する
-- 本番のスペックが公開されていないもの（isucon7-qualify と isucon9-final のベンチ、isucon9-qualify のベンチのメモリ）は、推測で埋めずに未設定のままにしている
+- 本番のスペックが公開されていないもの（isucon7-qualify と isucon9-final のベンチ、isucon9-qualify のベンチのメモリ、isucon7-final の競技ノードとベンチ）は、推測で埋めずに未設定のままにしている
 
 #### 古いAMIの注意点
 
@@ -201,6 +206,31 @@ isucon6-qualify・isucon7-qualify・isucon8-qualify は、上流のAMIが2021年
 
 上流には isucon5-qualify のAMIもあるが、対応していない。AMIに本番データが入っておらず
 （開発用の6ユーザーだけで、ベンチのテストセットと合わない）、既定のRuby実装もDBクエリが全て例外になり、ベンチが通らないため。
+
+#### 本戦のAMI
+
+isucon6-final・isucon7-final・isucon8-final は上流（matsuu/aws-isucon）にAMIが無い。isuenv のリポジトリの [images/](images/) にある
+Packer 定義で作ったAMIを、isuenv のメンテナのAWSアカウント（`738925651667`）から公開して使っている（AMI名は `isuenv-<問題名>-<日時>`）。
+どれも Ubuntu 24.04 で、SSHユーザーは `ubuntu`、アプリとベンチは `isucon` ユーザーの持ち物。
+
+| 問題 | 中身 | 初期状態 | 初期状態のベンチ（本番の構成・スペック、2026-10-24） |
+| --- | --- | --- | --- |
+| `isucon6-final` | 本番と同じく docker compose で動かす | 1号機だけアプリが動き、2〜5号機は止まっている（本番どおり）。既定は Go 実装（本番は PHP 実装） | pass（5,300〜5,900点） |
+| `isucon7-final` | **Go 実装だけ**（他の言語は入っていない）。MySQL は 8.0（本番は 5.7） | `--nodes 4` で 1〜3号機が Web、4号機が DB（本番どおり）。1〜3台では各ノードが1台で完結する | pass（2,400〜4,000点。ベンチは1号機で実行） |
+| `isucon8-final` | 本番と同じく docker compose で動かす。外部API（isubank・isulogger）はベンチノードで動く | 全台に同じアプリ（本番どおり）。既定は Go 実装 | 5回中4回 pass（400〜540点）。1回は負荷走行後のテスト「ログが欠損しています」で fail |
+
+- 当時の Dockerfile や依存の取得元が今は使えない箇所（Debian の apt の移転、消えたドメイン、タグを固定していない `mysql` イメージなど）は直してある。
+  どこをどう直したかは [images/provision/](images/provision/) の各スクリプトのコメントにある
+- **isucon8-final は `--bench` を付けて立てる。** 外部APIはベンチを回すノード（ベンチノード、無ければ1号機）で動く。
+  `--bench` なしの1台構成では、メモリ 1GiB の1号機にアプリと外部APIとベンチが全部載り、ベンチが通らない（その場合は `--no-limits`）
+- isucon8-final の外部APIは平文HTTP（ベンチノードの `:5515` が銀行、`:5516` がロガー）で受ける。当日の証明書は期限切れなので、
+  ベンチは競技ノードの証明書を検証しない。ベンチノードのスペックは、本番のベンチ（3コア / 2GB）と外部API（3コア / 2GB）の合計にしてある
+- isucon8-final はメモリ 1GiB に余裕が少なく、ベンチを続けて回すとアプリのメモリが膨らむ。初期実装のままだと、たまに fail する
+- isucon7-final の4号機が DB になるのは、各ノードが `isuenv:hosts` タグ（全ノードのIP）をインスタンスメタデータから読んで `/etc/hosts` に
+  `isu1`〜`isu4` を書くため。タグの反映に数分かかることがあり、その間は4号機の切り替えが終わっていない
+- メモリを節約するため、本番当時のVMに無かった常駐プロセス（snapd、amazon-ssm-agent、multipathd、unattended-upgrades など）を外してある。
+  Session Manager（SSM）では入れない
+- AMIを作り直したり消したりするときは、このREADMEで告知する。作り方は [images/README.md](images/README.md)
 
 #### タイプを指定したとき
 
@@ -328,7 +358,7 @@ isuenv bench isucon14 >> Makefile           # Makefileに取り込む
 
 対応している問題は `isuenv problems` の BENCH CMD 列が `yes` のものだけ。
 起動方法は実機で確認しないと確定できないため、検証できた問題から順に埋めている
-（現在は isucon6-qualify、isucon7-qualify、isucon8-qualify、isucon14、private-isu）。
+（現在は isucon6-qualify、isucon6-final、isucon7-qualify、isucon7-final、isucon8-qualify、isucon8-final、isucon14、private-isu）。
 未対応の問題では、NOTESのリンク先を見るよう促すエラーになる。
 
 ### `isuenv down <環境名>`
@@ -379,6 +409,8 @@ AWS上のリソースはすべて `isuenv:managed=true` タグが付き、`nuke`
 インスタンスには `isuenv:env`（環境名）、`isuenv:problem`（問題名）、`isuenv:node`（何号機か）、`isuenv:role`（`app` = 競技ノード /
 `bench` = ベンチマーカー専用ノード）、`isuenv:expires-at`（TTLの絶対期限）のタグが付く。
 CPUやメモリを絞って起動したノードには、`isuenv:vcpus`（絞った後のvCPU数）と `isuenv:mem-gb`（`mem=` のGiB数）も付く。
+全ノードを起動した後に、環境の全ノードのプライベートIPを並べた `isuenv:hosts`（`1=10.100.0.5,2=10.100.0.6,bench=10.100.0.7`）も付ける。
+インスタンスメタデータからタグを読めるようにして起動するので、ノードの中からも読める（台ごとに役割が違う isucon7-final が使う）。
 CLIはローカルに状態を持たず、すべてこれらのタグから復元する。
 
 ローカルには次のファイルが作られる。
@@ -396,6 +428,7 @@ VPC・サブネット・IGW・SG・キーペアは**無料**なので、`down` �
 ap-northeast-1のオンデマンド概算で、c5.large（多くの問題の既定）が約$0.107/時、
 m5.large（isucon6-qualifyの既定）が約$0.124/時、
 c7a.large（private-isuの既定）が約$0.129/時、c7a.xlarge（private-isuのベンチ用）が約$0.258/時。
+isucon6-final は m5.large が5台とベンチの m5.xlarge（約$0.248/時）、isucon8-final は c5.large が4台とベンチの c7i.2xlarge（約$0.449/時）。
 ベンチノードで大きいのは c5.2xlarge（isucon10-final / isucon13 / isucon14）の約$0.428/時と、
 c5.4xlarge（isucon9-qualify）の約$0.856/時。CPUやメモリを絞っても単価は元のタイプのまま変わらない。
 `isuenv list` の EST COST はノードごとの単価を合算した概算であり、実際の課金はAWSの請求を確認すること。

@@ -9,7 +9,7 @@ import (
 
 func TestBuildUserData(t *testing.T) {
 	expiresAt := time.Date(2026, 7, 8, 18, 0, 0, 0, time.UTC)
-	ud := BuildUserData(expiresAt, 0)
+	ud := BuildUserData(expiresAt, 0, NodeInfo{Role: RoleApp, Index: 1, Nodes: 1})
 	if !strings.HasPrefix(ud, "#!/bin/sh\n") {
 		t.Errorf("user data must be a shell script: %q", ud)
 	}
@@ -33,7 +33,7 @@ func TestBuildUserData(t *testing.T) {
 
 func TestBuildUserDataMemLimit(t *testing.T) {
 	expiresAt := time.Date(2026, 7, 8, 18, 0, 0, 0, time.UTC)
-	ud := BuildUserData(expiresAt, 2)
+	ud := BuildUserData(expiresAt, 2, NodeInfo{Role: RoleApp, Index: 1, Nodes: 1})
 
 	// TTLの設定はメモリ制限(再起動を伴う)より前に書く。順序が逆だと、再起動で
 	// スクリプトが打ち切られたときに自己消滅しない環境が残る。
@@ -76,7 +76,35 @@ func TestBuildUserDataMemLimit(t *testing.T) {
 		t.Errorf("only the TTL cron may power off the instance: %q", ud)
 	}
 
-	if other := BuildUserData(expiresAt, 8); !strings.Contains(other, "ISUENV_MEM=9G") || !strings.Contains(other, "-le 8388608 ]") || strings.Contains(other, "2G") {
+	if other := BuildUserData(expiresAt, 8, NodeInfo{Role: RoleApp, Index: 1, Nodes: 1}); !strings.Contains(other, "ISUENV_MEM=9G") || !strings.Contains(other, "-le 8388608 ]") || strings.Contains(other, "2G") {
 		t.Errorf("memory size must follow the argument: %q", other)
+	}
+}
+
+func TestBuildUserDataNodeInfo(t *testing.T) {
+	expiresAt := time.Date(2026, 7, 8, 18, 0, 0, 0, time.UTC)
+	ud := BuildUserData(expiresAt, 1, NodeInfo{Role: RoleBench, Index: 5, Nodes: 4, HasBench: true})
+	for _, want := range []string{
+		"ISUENV_ROLE=bench\n",
+		"ISUENV_NODE_INDEX=5\n",
+		"ISUENV_NODES=4\n",
+		"ISUENV_HAS_BENCH=1\n",
+		// 初期化スクリプトを持たないAMIでは何もしない。
+		"if [ -x /usr/local/sbin/isuenv-node-init ]; then",
+	} {
+		if !strings.Contains(ud, want) {
+			t.Errorf("user data should contain %q:\n%s", want, ud)
+		}
+	}
+	// 初期化はTTLの後、メモリ制限の再起動の前。再起動で打ち切られても初期化は済んでいるようにする。
+	ttl := strings.Index(ud, "/etc/cron.d/isuenv-ttl")
+	nodeInit := strings.Index(ud, "/usr/local/sbin/isuenv-node-init ||")
+	reboot := strings.Index(ud, "shutdown -r now")
+	if !(ttl < nodeInit && nodeInit < reboot) {
+		t.Errorf("order must be TTL (%d) < node init (%d) < reboot (%d):\n%s", ttl, nodeInit, reboot, ud)
+	}
+
+	if other := BuildUserData(expiresAt, 0, NodeInfo{Role: RoleApp, Index: 2, Nodes: 3}); !strings.Contains(other, "ISUENV_ROLE=app\nISUENV_NODE_INDEX=2\nISUENV_NODES=3\nISUENV_HAS_BENCH=0\n") {
+		t.Errorf("node info must follow the argument:\n%s", other)
 	}
 }
