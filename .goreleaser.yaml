@@ -52,9 +52,10 @@ homebrew_casks:
     description: CLI to create and destroy ISUCON practice environments on AWS EC2
     # バイナリは署名・notarizeしていないため、そのままだとGatekeeperの隔離属性で
     # 「壊れている」と言われて起動できない。インストール後に属性を落とす。
+    # goreleaser v2.19 で hooks.post.install(Homebrew の postflight)が非推奨になり、宣言的な install_steps(postflight_steps)に移った。
     hooks:
       post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/isuenv"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/isuenv"]
           end
