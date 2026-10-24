@@ -60,11 +60,13 @@ func runningInstanceWithRole(id, env, node, ip, privIP, instType, role string) e
 func TestUp_LaunchesNodesWithTagsAndTTL(t *testing.T) {
 	PollInterval = time.Millisecond
 	var runs []*ec2.RunInstancesInput
+	var hostTags []*ec2.CreateTagsInput
 	m := &awsapi.Mock{
 		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
 			runs = append(runs, in)
 			id := "i-" + strconv.Itoa(len(runs))
-			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String(id)}}}, nil
+			ip := "10.100.0.1" + strconv.Itoa(len(runs))
+			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String(id), PrivateIpAddress: aws.String(ip)}}}, nil
 		},
 		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
 			if len(in.InstanceIds) == 0 {
@@ -76,6 +78,10 @@ func TestUp_LaunchesNodesWithTagsAndTTL(t *testing.T) {
 				runningInstance("i-1", "isucon13", "1", "54.0.0.1", "10.100.0.11"),
 				runningInstance("i-2", "isucon13", "2", "54.0.0.2", "10.100.0.12"),
 			}}}}, nil
+		},
+		CreateTagsFunc: func(ctx context.Context, in *ec2.CreateTagsInput) (*ec2.CreateTagsOutput, error) {
+			hostTags = append(hostTags, in)
+			return &ec2.CreateTagsOutput{}, nil
 		},
 	}
 	e := &Engine{EC2: m}
@@ -109,6 +115,27 @@ func TestUp_LaunchesNodesWithTagsAndTTL(t *testing.T) {
 	}
 	if tagValue(tags, TagExpires) != "2026-07-08T18:00:00Z" {
 		t.Errorf("expires tag must be Now+TTL in RFC3339 UTC: %+v", tags)
+	}
+	// 全ノードのプライベートIPを全ノードにタグで渡し、ノードはそれをインスタンスメタデータから読む。
+	if first.MetadataOptions == nil || first.MetadataOptions.InstanceMetadataTags != ec2types.InstanceMetadataTagsStateEnabled {
+		t.Errorf("instance metadata tags must be enabled: %+v", first.MetadataOptions)
+	}
+	if len(hostTags) != 1 || strings.Join(hostTags[0].Resources, ",") != "i-1,i-2" || tagValue(hostTags[0].Tags, TagHosts) != "1=10.100.0.11,2=10.100.0.12" {
+		t.Errorf("hosts tag must list every node's private IP on every node: %+v", hostTags)
+	}
+}
+
+// noopCreateTags は Up が全ノードに付ける TagHosts を受け流す。中身は TestUp_LaunchesNodesWithTagsAndTTL で確かめる。
+func noopCreateTags(ctx context.Context, in *ec2.CreateTagsInput) (*ec2.CreateTagsOutput, error) {
+	return &ec2.CreateTagsOutput{}, nil
+}
+
+func TestHostEntry(t *testing.T) {
+	if got := hostEntry(launch{index: 3, role: RoleApp}, "10.0.0.3"); got != "3=10.0.0.3" {
+		t.Errorf("app node entry = %q", got)
+	}
+	if got := hostEntry(launch{index: 4, role: RoleBench}, "10.0.0.4"); got != "bench=10.0.0.4" {
+		t.Errorf("bench node entry = %q", got)
 	}
 }
 
@@ -282,9 +309,18 @@ func TestUp_RejectsNodesBelowOne(t *testing.T) {
 func TestUp_TreatsEventualConsistencyNotFoundAsNotReady(t *testing.T) {
 	PollInterval = time.Millisecond
 	describeCalls := 0
+	tagCalls := 0
 	m := &awsapi.Mock{
 		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
 			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String("i-1")}}}, nil
+		},
+		// CreateTags も起動直後は NotFound を返しうる。失敗扱いにせずリトライする。
+		CreateTagsFunc: func(ctx context.Context, in *ec2.CreateTagsInput) (*ec2.CreateTagsOutput, error) {
+			tagCalls++
+			if tagCalls == 1 {
+				return nil, notFoundError{}
+			}
+			return &ec2.CreateTagsOutput{}, nil
 		},
 		DescribeInstancesFunc: func(ctx context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
 			if len(in.InstanceIds) == 0 {
@@ -321,6 +357,7 @@ func TestUp_WithoutBenchLaunchesAppNodesOnly(t *testing.T) {
 	PollInterval = time.Millisecond
 	var runs []*ec2.RunInstancesInput
 	m := &awsapi.Mock{
+		CreateTagsFunc: noopCreateTags,
 		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
 			runs = append(runs, in)
 			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String("i-" + strconv.Itoa(len(runs)))}}}, nil
@@ -371,6 +408,7 @@ func TestUp_BenchNodeUsesItsOwnTypeAndRole(t *testing.T) {
 	PollInterval = time.Millisecond
 	var runs []*ec2.RunInstancesInput
 	m := &awsapi.Mock{
+		CreateTagsFunc: noopCreateTags,
 		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
 			runs = append(runs, in)
 			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String("i-" + strconv.Itoa(len(runs)))}}}, nil
@@ -467,6 +505,7 @@ func TestUp_AppliesPerNodeLimits(t *testing.T) {
 	PollInterval = time.Millisecond
 	var runs []*ec2.RunInstancesInput
 	m := &awsapi.Mock{
+		CreateTagsFunc: noopCreateTags,
 		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
 			runs = append(runs, in)
 			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String("i-" + strconv.Itoa(len(runs)))}}}, nil
@@ -638,6 +677,7 @@ func TestUp_NameSeparatesEnvFromProblem(t *testing.T) {
 	var dupFilter []string
 	var runs []*ec2.RunInstancesInput
 	m := &awsapi.Mock{
+		CreateTagsFunc: noopCreateTags,
 		RunInstancesFunc: func(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
 			runs = append(runs, in)
 			return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String("i-1")}}}, nil

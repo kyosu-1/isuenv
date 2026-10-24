@@ -16,10 +16,12 @@
 #   c5.2xlarge  8vCPU / 16GiB  ValidCores [2,4]      ValidThreadsPerCore [1,2]
 #   c5.4xlarge 16vCPU / 32GiB  ValidCores [2,4,6,8]  ValidThreadsPerCore [1,2]
 #   m5.large    2vCPU /  8GiB  ValidCores [1]        ValidThreadsPerCore [1,2]
+#   m5.xlarge   4vCPU / 16GiB  ValidCores [2]        ValidThreadsPerCore [1,2]  (2026-10-24 に確認)
 #   r5.large    2vCPU / 16GiB  ValidCores [1]        ValidThreadsPerCore [1,2]
 #   c4.xlarge   4vCPU / 7.5GiB ValidCores [1,2]      ValidThreadsPerCore [1,2]
 #   c7a.large   2vCPU /  4GiB  ValidCores [1,2]      ValidThreadsPerCore [1]
 #   c7a.xlarge  4vCPU /  8GiB  ValidCores [1,2,3,4]  ValidThreadsPerCore [1]
+#   c7i.2xlarge 8vCPU / 16GiB  ValidCores [1,2,3,4]  ValidThreadsPerCore [1,2]  (2026-10-24 に確認)
 # t 系(バースト)はスコアが不安定になるので使わない。
 problems:
   # isucon6〜8 の予選は、上流のAMIが 2021-04 のビルドのまま更新されていない(Ubuntu 16.04 / CentOS 7)。
@@ -49,6 +51,35 @@ problems:
         - -target
         - "http://{{.TargetIP}}"
     notes: "bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon6-qualify"
+  # isucon6〜8 の本戦は上流(matsuu/aws-isucon)にAMIが無いので、isuenv が images/ の Packer 定義でAMIを作り、
+  # メンテナのアカウント(738925651667)から公開している。中身と本番との違いは images/provision/<問題名>.sh に書いてある。
+  - name: isucon6-final
+    ami_pattern: "isuenv-isucon6-final-*"
+    owner_id: "738925651667"
+    ssh_user: ubuntu
+    # 本番の競技サーバーは Azure Standard_DS2_v2(2vCPU / 7GiB)が5台(公式リポジトリの azure/azuredeploy.json の vmSize、
+    # regulation.md「5ノードずつ」)。isucon6-qualify と同じく m5.large(2vCPU / 8GiB)を mem=7G で 7GiB に絞る。
+    # 初期状態は「01のみでアプリケーションが動いている」(regulation.md)ので、AMIは1号機でだけアプリを起動する。
+    official_nodes: 5
+    instance_type: m5.large
+    mem_gb: 7
+    # 本番のベンチは Standard_DS3_v2(4vCPU / 14GiB)(公式リポジトリの provisioning/deploy.json の bench)。
+    # m5.xlarge(4vCPU / 16GiB)を mem=14G で 14GiB に絞る。
+    bench_instance_type: m5.xlarge
+    bench_mem_gb: 14
+    # 本番のベンチワーカーと同じ引数(bench/cmd/worker の buildBenchCmd: -urls <URL> -timeout 60)。
+    # 本番は proxy(nginx)を経由していたが、isuenv では1号機の 443 を直接叩く。
+    # 2026-10-24 に本番の構成(5台 + ベンチノード)で Go 実装が pass した(スコア 5,300〜5,900。再起動後も pass)。
+    bench:
+      user: isucon
+      workdir: /home/isucon/bench
+      command: ./local-bench
+      args:
+        - -urls
+        - "https://{{.TargetIP}}"
+        - -timeout
+        - "60"
+    notes: "isuenvが作ったAMI(Ubuntu 24.04 + docker compose)。アプリは /home/isucon/webapp で isu.service が起動する(1号機のみ)。既定はGo実装(本番の初期状態はPHP実装)"
   - name: isucon7-qualify
     ami_pattern: "isucon7-qualify-*"
     owner_id: "839726181030"
@@ -75,6 +106,25 @@ problems:
         - -output
         - result.json
     notes: "本番は3台構成。bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon7-qualify"
+  - name: isucon7-final
+    ami_pattern: "isuenv-isucon7-final-*"
+    owner_id: "738925651667"
+    ssh_user: ubuntu
+    # 本番の競技サーバーは4台で、初期構成は先頭の3台が Web、残りの1台が DB(公式リポジトリの manual.pdf)。
+    # 1台あたりの CPU・メモリは公式リポジトリ・マニュアル・公式ブログ(本選問題の解説と攻略)のどこにも公開されていないため
+    # (非公開)、制限はかけない(c5.large のまま)。ベンチのスペックも非公開なので bench_instance_type は設定しない。
+    # --nodes 4 以上で立てると、AMI が isuenv:hosts タグから全ノードのIPを読み、1〜3号機を Web、4号機を DB にして
+    # /etc/hosts に isu1〜isuN を書く。1〜3台では各ノードが1台で完結する。
+    official_nodes: 4
+    # ベンチは1号機(Web)の nginx(:80)を叩く。
+    # 2026-10-24 に本番の構成(4台、ベンチは1号機)で Go 実装が pass した(スコア 2,400〜4,000。再起動後も pass)。
+    bench:
+      user: isucon
+      workdir: /home/isucon/bench
+      command: ./bench
+      args:
+        - "-remotes={{.TargetIP}}:80"
+    notes: "isuenvが作ったAMI(Ubuntu 24.04 + Go実装のみ。MySQLは8.0)。本番はUbuntu 16.04 + MySQL 5.7。--nodes 4 で Web 3台 + DB 1台の本番の初期構成になる"
   - name: isucon8-qualify
     ami_pattern: "isucon8-qualify-*"
     owner_id: "839726181030"
@@ -106,6 +156,37 @@ problems:
         - -output
         - /home/isucon/torb/bench/result.json
     notes: "AMIは CentOS 7。既定のPerl実装はメモリ 1GiB だとベンチ中に OOM で fail する(Go実装などに切り替えるか --no-limits)。bench手順: https://github.com/matsuu/aws-isucon/tree/main/isucon8-qualify"
+  - name: isucon8-final
+    ami_pattern: "isuenv-isucon8-final-*"
+    owner_id: "738925651667"
+    ssh_user: ubuntu
+    # 本番の競技サーバーは「vCPU 2コア / メモリ 1GB」が4台で、初期状態は全台に同じアプリ
+    # (公式リポジトリのREADME「本番当日の動作環境」、docs/MANUAL.md)。c5.large を mem=1G で 1GiB に絞る。
+    official_nodes: 4
+    mem_gb: 1
+    # 本番はベンチ「3コア / 2GB」と外部API(isubank・isulogger)「3コア / 2GB」が別々の1台ずつ(同README)。
+    # isuenv のベンチノードは1台なので外部APIをベンチノードに同居させ、スペックは2台の合計(6vCPU / 4GiB)にする。
+    # c7i.2xlarge(8vCPU / 16GiB)を CoreCount=3 / ThreadsPerCore=2 で 6vCPU に、mem=4G で 4GiB に絞る。
+    bench_instance_type: c7i.2xlarge
+    bench_cpu_options: {core_count: 3, threads_per_core: 2}
+    bench_mem_gb: 4
+    # 外部APIはベンチを回すノード(ベンチノード、無ければ1号機)で動き、平文HTTPの :5515(銀行)と :5516(ロガー)で受ける。
+    # 当日の証明書は期限切れなので、ベンチは競技ノードの証明書を検証しない(AMIのベンチに手を入れてある)。
+    # 2026-10-24 に1台構成(c5.large、メモリ制限なし、ベンチ同居)で Go 実装が pass した(スコア 476。上流READMEの初期スコアは Go 500前後)。
+    bench:
+      user: isucon
+      workdir: /home/isucon/bench
+      command: ./bin/bench
+      args:
+        - "-appep=https://{{.TargetIP}}"
+        - "-bankep=http://{{.BenchIP}}:5515"
+        - "-logep=http://{{.BenchIP}}:5516"
+        - "-internalbank=http://127.0.0.1:5515"
+        - "-internallog=http://127.0.0.1:5516"
+    # 2026-10-24 に本番の構成(4台 + ベンチノード)で、ベンチは5回中4回 pass(スコア 400〜540)。1回は負荷走行後のテストの
+    # 「ログが欠損しています」で fail した(初期実装の負荷時のふるまい)。再起動後も pass。
+    # --bench なしの1台構成では、1号機(1GiB)に外部APIとベンチも載るので、メモリが足りずに fail する。
+    notes: "isuenvが作ったAMI(Ubuntu 24.04 + docker compose)。既定はGo実装。外部APIはベンチノードに同居するので --bench を付けて立てる(--bench なしの1台構成はメモリ1GiBに全部載って通らない。その場合は --no-limits)"
   - name: isucon9-qualify
     ami_pattern: "isucon9-qualify-*"
     owner_id: "839726181030"
